@@ -25,6 +25,7 @@ from pathlib import Path
 import toml
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -348,6 +349,72 @@ def split_message(text: str, max_len: int = TG_MAX_LENGTH) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# OPT: tag parsing for inline keyboard buttons
+# ---------------------------------------------------------------------------
+
+# Max callback_data length imposed by Telegram.
+_CB_MAX = 64
+
+
+def parse_opt_tags(response: str) -> list[tuple[str, list[str]]]:
+    """Parse NEED: lines that contain OPT: tags.
+
+    Returns a list of (clean_text, [option_labels]) tuples – one per NEED: line
+    that has at least one OPT: tag.  Lines without OPT: tags are ignored.
+
+    Example input line:
+        NEED: Random — Stale 7+ heartbeats, orphaned. | OPT:Stop Random | OPT:Leave it
+    Returns:
+        [("NEED: Random — Stale 7+ heartbeats, orphaned.", ["Stop Random", "Leave it"])]
+    """
+    results: list[tuple[str, list[str]]] = []
+    for line in response.splitlines():
+        if "NEED:" not in line or "OPT:" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        text_parts: list[str] = []
+        options: list[str] = []
+        for part in parts:
+            if part.startswith("OPT:"):
+                options.append(part[4:].strip())
+            else:
+                text_parts.append(part)
+        if options:
+            results.append((" | ".join(text_parts), options))
+    return results
+
+
+def build_opt_keyboard(
+    profile: str, options: list[str],
+) -> InlineKeyboardMarkup:
+    """Build an InlineKeyboardMarkup from a list of option labels.
+
+    callback_data format: ``opt:<profile>:<label>`` (truncated to 64 bytes).
+    """
+    buttons: list[list[InlineKeyboardButton]] = []
+    for label in options:
+        cb = f"opt:{profile}:{label}"
+        # Respect Telegram's 64-byte callback_data limit.
+        if len(cb.encode("utf-8")) > _CB_MAX:
+            cb = cb.encode("utf-8")[:_CB_MAX].decode("utf-8", "ignore")
+        buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def strip_opt_tags(response: str) -> str:
+    """Return the response with OPT: segments removed from NEED: lines."""
+    out_lines: list[str] = []
+    for line in response.splitlines():
+        if "NEED:" in line and "OPT:" in line:
+            parts = [p.strip() for p in line.split("|")]
+            cleaned = [p for p in parts if not p.startswith("OPT:")]
+            out_lines.append(" | ".join(cleaned))
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines)
+
+
+# ---------------------------------------------------------------------------
 # Telegram bot setup
 # ---------------------------------------------------------------------------
 
@@ -535,6 +602,57 @@ def create_bot(config: dict) -> tuple[Bot, Dispatcher]:
             prefixed = f"{profile_tag}{chunk}" if profile_tag else chunk
             await message.answer(prefixed)
 
+    @dp.callback_query(lambda cb: cb.data and cb.data.startswith("opt:"))
+    async def handle_opt_callback(callback: types.CallbackQuery):
+        """Handle taps on OPT: inline keyboard buttons."""
+        # Parse callback_data  →  opt:<profile>:<label>
+        parts = callback.data.split(":", 2)
+        if len(parts) < 3:
+            await callback.answer("Invalid option.")
+            return
+
+        profile = parts[1]
+        label = parts[2]
+
+        if profile not in profiles:
+            await callback.answer("Unknown profile.")
+            return
+
+        session_title = conductor_session_title(profile)
+
+        # Acknowledge tap immediately so Telegram stops the spinner.
+        await callback.answer(f"Sending: {label}")
+
+        # Edit the original message to indicate the chosen option.
+        try:
+            orig_text = callback.message.text or ""
+            await callback.message.edit_text(
+                f"{orig_text}\n\n✓ Chosen: {label}"
+            )
+        except Exception:
+            pass  # message may already be edited / deleted
+
+        # Forward the chosen option to the conductor.
+        log.info("OPT callback [%s]: %s", profile, label)
+        ok, response = send_to_conductor(
+            session_title,
+            label,
+            profile=profile,
+            wait_for_reply=True,
+            response_timeout=RESPONSE_TIMEOUT,
+        )
+        if ok and response:
+            profile_tag = f"[{profile}] " if len(profiles) > 1 else ""
+            for chunk in split_message(response):
+                await bot.send_message(
+                    authorized_user, f"{profile_tag}{chunk}"
+                )
+        elif not ok:
+            await bot.send_message(
+                authorized_user,
+                f"[Failed to send option to conductor [{profile}].]",
+            )
+
     return bot, dp
 
 
@@ -671,10 +789,25 @@ async def heartbeat_loop(bot: Bot, config: dict):
                         prefix = (
                             f"[{profile}] " if len(profiles) > 1 else ""
                         )
-                        await bot.send_message(
-                            authorized_user,
-                            f"{prefix}Conductor alert:\n{response}",
-                        )
+                        opt_lines = parse_opt_tags(response)
+                        if opt_lines:
+                            # Send cleaned text (OPT: stripped) with inline buttons.
+                            clean = strip_opt_tags(response)
+                            # Collect all options across NEED: lines into one keyboard.
+                            all_options: list[str] = []
+                            for _, opts in opt_lines:
+                                all_options.extend(opts)
+                            keyboard = build_opt_keyboard(profile, all_options)
+                            await bot.send_message(
+                                authorized_user,
+                                f"{prefix}Conductor alert:\n{clean}",
+                                reply_markup=keyboard,
+                            )
+                        else:
+                            await bot.send_message(
+                                authorized_user,
+                                f"{prefix}Conductor alert:\n{response}",
+                            )
                     except Exception as e:
                         log.error(
                             "Failed to send Telegram notification: %s", e
