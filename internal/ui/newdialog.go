@@ -19,14 +19,16 @@ import (
 type focusTarget int
 
 const (
-	focusName      focusTarget = iota
-	focusPath                  // project path input.
-	focusCommand               // tool/command picker.
-	focusWorktree              // worktree checkbox.
-	focusSandbox               // sandbox checkbox.
-	focusInherited             // inherited Docker settings toggle (conditional).
-	focusBranch                // branch input (conditional — only when worktree enabled).
-	focusOptions               // tool-specific options panel (conditional).
+	focusName        focusTarget = iota
+	focusPath                    // project path input.
+	focusCommand                 // tool/command picker.
+	focusWorktree                // worktree checkbox.
+	focusSandbox                 // sandbox checkbox.
+	focusEpicRunner              // epic runner checkbox.
+	focusEpicID                  // epic ID input (conditional — only when epic runner enabled).
+	focusInherited               // inherited Docker settings toggle (conditional).
+	focusBranch                  // branch input (conditional — only when worktree enabled).
+	focusOptions                 // tool-specific options panel (conditional).
 )
 
 // settingDisplay pairs a label with a formatted value for read-only display.
@@ -67,9 +69,14 @@ type NewDialog struct {
 	sandboxEnabled    bool
 	inheritedExpanded bool             // whether the inherited settings section is expanded.
 	inheritedSettings []settingDisplay // non-default Docker config values to display.
+	// Epic runner support.
+	epicRunnerEnabled bool
+	epicIDInput       textinput.Model
 	// Inline validation error displayed inside the dialog.
 	validationErr string
-	pathCycler    session.CompletionCycler // Path autocomplete state.
+	pathCycler       session.CompletionCycler // Path autocomplete state.
+	tabCompletions   []string                // filesystem completions shown in dropdown.
+	tabCompletionIdx int                     // selected index in tabCompletions dropdown.
 	// Recent sessions picker.
 	recentSessions      []*statedb.RecentSessionRow
 	recentSessionCursor int
@@ -83,13 +90,14 @@ type dialogSnapshot struct {
 	path            string
 	commandCursor   int
 	commandInput    string
-	sandboxEnabled  bool
-	worktreeEnabled bool
-	branch          string
-	branchAutoSet   bool
-	claudeOptions   *session.ClaudeOptions
-	geminiYolo      bool
-	codexYolo       bool
+	sandboxEnabled    bool
+	worktreeEnabled   bool
+	epicRunnerEnabled bool
+	branch            string
+	branchAutoSet     bool
+	claudeOptions     *session.ClaudeOptions
+	geminiYolo        bool
+	codexYolo         bool
 }
 
 // buildPresetCommands returns the list of commands for the picker,
@@ -166,11 +174,18 @@ func NewNewDialog() *NewDialog {
 	branchInput.CharLimit = 100
 	branchInput.Width = 40
 
+	// Create epic ID input for epic runner
+	epicIDInput := textinput.New()
+	epicIDInput.Placeholder = "MOVE-123"
+	epicIDInput.CharLimit = 20
+	epicIDInput.Width = 40
+
 	dlg := &NewDialog{
 		nameInput:       nameInput,
 		pathInput:       pathInput,
 		commandInput:    commandInput,
 		branchInput:     branchInput,
+		epicIDInput:     epicIDInput,
 		claudeOptions:   NewClaudeOptionsPanel(),
 		geminiOptions:   NewYoloOptionsPanel("Gemini", "YOLO mode - auto-approve all"),
 		codexOptions:    NewYoloOptionsPanel("Codex", "YOLO mode - bypass approvals and sandbox"),
@@ -203,6 +218,7 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.suggestionNavigated = false // reset on show
 	d.pathSuggestionCursor = 0    // reset cursor too
 	d.pathCycler.Reset()          // clear stale autocomplete matches from previous show
+	d.tabCompletions = nil
 	d.showRecentPicker = false    // reset recent picker
 	d.recentSessionCursor = 0
 	d.pathInput.Blur()
@@ -220,6 +236,9 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.sandboxEnabled = false
 	d.inheritedExpanded = false
 	d.inheritedSettings = nil
+	// Reset epic runner.
+	d.epicRunnerEnabled = false
+	d.epicIDInput.SetValue("")
 	// Set path input to group's default path if provided, otherwise use current working directory.
 	if defaultPath != "" {
 		d.pathInput.SetValue(defaultPath)
@@ -306,17 +325,18 @@ func (d *NewDialog) saveSnapshot() *dialogSnapshot {
 	}
 
 	return &dialogSnapshot{
-		name:            d.nameInput.Value(),
-		path:            d.pathInput.Value(),
-		commandCursor:   d.commandCursor,
-		commandInput:    d.commandInput.Value(),
-		sandboxEnabled:  d.sandboxEnabled,
-		worktreeEnabled: d.worktreeEnabled,
-		branch:          d.branchInput.Value(),
-		branchAutoSet:   d.branchAutoSet,
-		claudeOptions:   claudeOpts,
-		geminiYolo:      d.geminiOptions.GetYoloMode(),
-		codexYolo:       d.codexOptions.GetYoloMode(),
+		name:              d.nameInput.Value(),
+		path:              d.pathInput.Value(),
+		commandCursor:     d.commandCursor,
+		commandInput:      d.commandInput.Value(),
+		sandboxEnabled:    d.sandboxEnabled,
+		worktreeEnabled:   d.worktreeEnabled,
+		epicRunnerEnabled: d.epicRunnerEnabled,
+		branch:            d.branchInput.Value(),
+		branchAutoSet:     d.branchAutoSet,
+		claudeOptions:     claudeOpts,
+		geminiYolo:        d.geminiOptions.GetYoloMode(),
+		codexYolo:         d.codexOptions.GetYoloMode(),
 	}
 }
 
@@ -328,6 +348,7 @@ func (d *NewDialog) restoreSnapshot(s *dialogSnapshot) {
 	d.commandInput.SetValue(s.commandInput)
 	d.sandboxEnabled = s.sandboxEnabled
 	d.worktreeEnabled = s.worktreeEnabled
+	d.epicRunnerEnabled = s.epicRunnerEnabled
 	d.branchInput.SetValue(s.branch)
 	d.branchAutoSet = s.branchAutoSet
 	if s.claudeOptions != nil {
@@ -520,6 +541,22 @@ func (d *NewDialog) ToggleSandbox() {
 	d.rebuildFocusTargets()
 }
 
+// IsEpicRunnerEnabled returns whether epic runner mode is enabled.
+func (d *NewDialog) IsEpicRunnerEnabled() bool {
+	return d.epicRunnerEnabled
+}
+
+// ToggleEpicRunner toggles epic runner mode.
+func (d *NewDialog) ToggleEpicRunner() {
+	d.epicRunnerEnabled = !d.epicRunnerEnabled
+	d.rebuildFocusTargets()
+}
+
+// GetEpicID returns the epic ID entered by the user.
+func (d *NewDialog) GetEpicID() string {
+	return strings.TrimSpace(d.epicIDInput.Value())
+}
+
 // GetSelectedCommand returns the currently selected command/tool
 func (d *NewDialog) GetSelectedCommand() string {
 	if d.commandCursor >= 0 && d.commandCursor < len(d.presetCommands) {
@@ -563,6 +600,14 @@ func (d *NewDialog) Validate() string {
 	// Check for empty path
 	if path == "" {
 		return "Project path cannot be empty"
+	}
+
+	// Validate epic ID if epic runner is enabled
+	if d.epicRunnerEnabled {
+		epicID := strings.TrimSpace(d.epicIDInput.Value())
+		if epicID == "" {
+			return "Epic ID required for epic runner"
+		}
 	}
 
 	// Validate worktree branch if enabled
@@ -610,7 +655,10 @@ func (d *NewDialog) indexOf(target focusTarget) int {
 // rebuildFocusTargets builds the ordered list of active focusable elements
 // based on current dialog state (sandbox, worktree, tool options visibility).
 func (d *NewDialog) rebuildFocusTargets() {
-	targets := []focusTarget{focusName, focusPath, focusCommand, focusWorktree, focusSandbox}
+	targets := []focusTarget{focusName, focusPath, focusCommand, focusWorktree, focusSandbox, focusEpicRunner}
+	if d.epicRunnerEnabled {
+		targets = append(targets, focusEpicID)
+	}
 	if d.sandboxEnabled && len(d.inheritedSettings) > 0 {
 		targets = append(targets, focusInherited)
 	}
@@ -651,6 +699,7 @@ func (d *NewDialog) updateFocus() {
 	d.pathInput.Blur()
 	d.commandInput.Blur()
 	d.branchInput.Blur()
+	d.epicIDInput.Blur()
 	d.claudeOptions.Blur()
 	d.geminiOptions.Blur()
 	d.codexOptions.Blur()
@@ -672,8 +721,10 @@ func (d *NewDialog) updateFocus() {
 		if d.commandCursor == 0 { // shell.
 			d.commandInput.Focus()
 		}
-	case focusWorktree, focusSandbox, focusInherited:
+	case focusWorktree, focusSandbox, focusEpicRunner, focusInherited:
 		// Checkbox/toggle rows — no text input to focus.
+	case focusEpicID:
+		d.epicIDInput.Focus()
 	case focusBranch:
 		d.branchInput.Focus()
 	case focusOptions:
@@ -746,6 +797,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.pathInput.SetCursor(0)
 				d.pathInput.Focus()
 				d.pathCycler.Reset()
+				d.tabCompletions = nil
 				// DON'T return — let the rune reach textinput.Update() below
 			case tea.KeyBackspace, tea.KeyDelete:
 				d.pathSoftSelected = false
@@ -753,6 +805,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.pathInput.SetCursor(0)
 				d.pathInput.Focus()
 				d.pathCycler.Reset()
+				d.tabCompletions = nil
 				d.filterPathSuggestions()
 				return d, nil // consume the key
 			case tea.KeyLeft, tea.KeyRight:
@@ -764,26 +817,56 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 
 		switch msg.String() {
 		case "tab":
-			// On path field: trigger autocomplete or cycle through matches.
+			// On path field: smart filesystem autocomplete.
 			if cur == focusPath {
 				path := d.pathInput.Value()
-				info, err := os.Stat(path)
-				isDir := err == nil && info.IsDir()
-				isPartial := !isDir || strings.HasSuffix(path, string(os.PathSeparator))
 
-				if d.pathCycler.IsActive() || isPartial {
-					if d.pathCycler.IsActive() {
-						d.pathInput.SetValue(d.pathCycler.Next())
-						d.pathInput.SetCursor(len(d.pathInput.Value()))
-						return d, nil
+				// If the cycler is already active, cycle to next match.
+				if d.pathCycler.IsActive() {
+					val := d.pathCycler.Next()
+					d.pathInput.SetValue(val)
+					d.pathInput.SetCursor(len(val))
+					// Update highlighted index in the tab completions dropdown.
+					for i, tc := range d.tabCompletions {
+						if tc == val {
+							d.tabCompletionIdx = i
+							break
+						}
 					}
-					matches, err := session.GetDirectoryCompletions(path)
-					if err == nil && len(matches) > 0 {
-						d.pathCycler.SetMatches(matches)
-						d.pathInput.SetValue(d.pathCycler.Next())
-						d.pathInput.SetCursor(len(d.pathInput.Value()))
-						return d, nil
+					return d, nil
+				}
+
+				// Get filesystem completions for the current input.
+				matches, err := session.GetDirectoryCompletions(path)
+				if err == nil && len(matches) > 0 {
+					if len(matches) == 1 {
+						// Single match — complete and append / so next Tab drills in.
+						completed := matches[0] + string(os.PathSeparator)
+						d.pathInput.SetValue(completed)
+						d.pathInput.SetCursor(len(completed))
+						d.tabCompletions = nil
+						d.pathCycler.Reset()
+					} else {
+						// Multiple matches — complete to longest common prefix first.
+						lcp := session.LongestCommonPrefix(matches)
+						if len(lcp) > len(path) {
+							// LCP extends beyond current input — apply it without cycling.
+							d.pathInput.SetValue(lcp)
+							d.pathInput.SetCursor(len(lcp))
+							d.tabCompletions = matches
+							d.tabCompletionIdx = -1
+							d.pathCycler.Reset()
+						} else {
+							// LCP matches current input — start cycling.
+							d.tabCompletions = matches
+							d.pathCycler.SetMatches(matches)
+							val := d.pathCycler.Next()
+							d.pathInput.SetValue(val)
+							d.pathInput.SetCursor(len(val))
+							d.tabCompletionIdx = 0
+						}
 					}
+					return d, nil
 				}
 			}
 
@@ -908,6 +991,19 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				return d, nil
 			}
 
+		case "e":
+			if cur == focusCommand {
+				d.ToggleEpicRunner()
+				d.rebuildFocusTargets()
+				if d.epicRunnerEnabled {
+					if idx := d.indexOf(focusEpicID); idx >= 0 {
+						d.focusIndex = idx
+					}
+					d.updateFocus()
+				}
+				return d, nil
+			}
+
 		case "y":
 			selectedCmd := d.GetSelectedCommand()
 			if cur == focusCommand && (selectedCmd == "gemini" || selectedCmd == "codex") && d.toolOptions != nil {
@@ -939,6 +1035,17 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.rebuildFocusTargets()
 				return d, nil
 			}
+			if cur == focusEpicRunner {
+				d.ToggleEpicRunner()
+				d.rebuildFocusTargets()
+				if d.epicRunnerEnabled {
+					if idx := d.indexOf(focusEpicID); idx >= 0 {
+						d.focusIndex = idx
+					}
+					d.updateFocus()
+				}
+				return d, nil
+			}
 			if cur == focusInherited {
 				d.inheritedExpanded = !d.inheritedExpanded
 				return d, nil
@@ -964,14 +1071,17 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			d.suggestionNavigated = false
 			d.pathSuggestionCursor = 0
 			d.pathCycler.Reset()
+			d.tabCompletions = nil
 			d.filterPathSuggestions()
 		}
 	case focusCommand:
 		if d.commandCursor == 0 {
 			d.commandInput, cmd = d.commandInput.Update(msg)
 		}
-	case focusWorktree, focusSandbox, focusInherited:
+	case focusWorktree, focusSandbox, focusEpicRunner, focusInherited:
 		// Checkbox/toggle rows — no text input to update.
+	case focusEpicID:
+		d.epicIDInput, cmd = d.epicIDInput.Update(msg)
 	case focusBranch:
 		oldBranch := d.branchInput.Value()
 		d.branchInput, cmd = d.branchInput.Update(msg)
@@ -1188,6 +1298,62 @@ func (d *NewDialog) View() string {
 			content.WriteString("\n")
 		}
 	}
+
+	// Show filesystem tab-completions dropdown when active
+	if d.focusIndex == 1 && len(d.tabCompletions) > 0 {
+		suggestionStyle := lipgloss.NewStyle().
+			Foreground(ColorComment)
+		selectedStyle := lipgloss.NewStyle().
+			Foreground(ColorGreen).
+			Bold(true)
+
+		maxShow := 5
+		total := len(d.tabCompletions)
+		startIdx := 0
+		endIdx := total
+		if total > maxShow {
+			center := d.tabCompletionIdx
+			if center < 0 {
+				center = 0
+			}
+			startIdx = center - maxShow/2
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			endIdx = startIdx + maxShow
+			if endIdx > total {
+				endIdx = total
+				startIdx = endIdx - maxShow
+			}
+		}
+
+		content.WriteString("  ")
+		content.WriteString(lipgloss.NewStyle().Foreground(ColorComment).Render(
+			fmt.Sprintf("─ %d completions (Tab: cycle) ─", total)))
+		content.WriteString("\n")
+
+		if startIdx > 0 {
+			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↑ %d more above", startIdx)))
+			content.WriteString("\n")
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			style := suggestionStyle
+			prefix := "    "
+			if i == d.tabCompletionIdx {
+				style = selectedStyle
+				prefix = "  ▶ "
+			}
+			// Show only the basename for readability, with full path on selected.
+			content.WriteString(style.Render(prefix + d.tabCompletions[i]))
+			content.WriteString("\n")
+		}
+
+		if endIdx < total {
+			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↓ %d more below", total-endIdx)))
+			content.WriteString("\n")
+		}
+	}
 	content.WriteString("\n")
 
 	// Command selection
@@ -1260,6 +1426,27 @@ func (d *NewDialog) View() string {
 		sandboxLabel = "Run in Docker sandbox (s)"
 	}
 	content.WriteString(renderCheckboxLine(sandboxLabel, d.sandboxEnabled, cur == focusSandbox))
+
+	// Epic runner checkbox — individually focusable.
+	epicRunnerLabel := "Enable epic runner"
+	if cur == focusCommand {
+		epicRunnerLabel = "Enable epic runner (e)"
+	}
+	content.WriteString(renderCheckboxLine(epicRunnerLabel, d.epicRunnerEnabled, cur == focusEpicRunner))
+
+	// Epic ID input (only visible when epic runner is enabled).
+	if d.epicRunnerEnabled {
+		content.WriteString("\n")
+		if cur == focusEpicID {
+			content.WriteString(activeLabelStyle.Render("▶ Epic ID:"))
+		} else {
+			content.WriteString(labelStyle.Render("  Epic ID:"))
+		}
+		content.WriteString("\n")
+		content.WriteString("  ")
+		content.WriteString(d.epicIDInput.View())
+		content.WriteString("\n")
+	}
 
 	// Inherited Docker settings (only visible when sandbox is enabled).
 	if d.sandboxEnabled && len(d.inheritedSettings) > 0 {
@@ -1342,11 +1529,11 @@ func (d *NewDialog) View() string {
 	} else if cur == focusCommand {
 		selectedCmd := d.GetSelectedCommand()
 		if selectedCmd == "gemini" || selectedCmd == "codex" {
-			helpText = "←→ command │ w worktree │ s sandbox │ y yolo │ Tab next │ Enter create │ Esc cancel"
+			helpText = "←→ command │ w worktree │ s sandbox │ e epic │ y yolo │ Tab next │ Enter create │ Esc cancel"
 		} else {
-			helpText = "←→ command │ w worktree │ s sandbox │ Tab next │ Enter create │ Esc cancel"
+			helpText = "←→ command │ w worktree │ s sandbox │ e epic │ Tab next │ Enter create │ Esc cancel"
 		}
-	} else if cur == focusWorktree || cur == focusSandbox {
+	} else if cur == focusWorktree || cur == focusSandbox || cur == focusEpicRunner {
 		helpText = "Space toggle │ ↑↓ navigate │ Enter create │ Esc cancel"
 	} else if cur == focusInherited {
 		helpText = "Space expand/collapse │ ↑↓ navigate │ Enter create │ Esc cancel"

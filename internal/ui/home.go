@@ -4098,6 +4098,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		geminiYoloMode := h.newDialog.IsGeminiYoloMode()
 		sandboxMode := h.newDialog.IsSandboxEnabled()
+		epicRunnerMode := h.newDialog.IsEpicRunnerEnabled()
+		epicID := h.newDialog.GetEpicID()
 
 		return h, h.createSessionInGroupWithWorktreeAndOptions(
 			name,
@@ -4109,6 +4111,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			branchName,
 			geminiYoloMode,
 			sandboxMode,
+			epicRunnerMode,
+			epicID,
 			toolOptionsJSON,
 		)
 
@@ -5140,6 +5144,8 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				"",
 				false,
 				false,
+				false,
+				"",
 				pendingToolOpts,
 			)
 		case "n", "N", "esc":
@@ -5823,6 +5829,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch string,
 	geminiYoloMode bool,
 	sandboxEnabled bool,
+	epicRunnerEnabled bool,
+	epicID string,
 	toolOptionsJSON json.RawMessage,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -5889,6 +5897,15 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 		// Apply sandbox config.
 		if sandboxEnabled {
 			inst.Sandbox = session.NewSandboxConfig("")
+		}
+
+		// Apply epic runner config and set up conductor directory.
+		if epicRunnerEnabled && epicID != "" {
+			inst.EpicRunnerEnabled = true
+			inst.EpicID = epicID
+			if err := session.SetupEpicRunnerConductor(name, epicID); err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("failed to set up epic runner: %w", err)}
+			}
 		}
 
 		uiLog.Info("session_create_starting",
@@ -6023,7 +6040,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 	return h.createSessionInGroupWithWorktreeAndOptions(
 		name, projectPath, command, groupPath,
 		"", "", "", // no worktree
-		geminiYoloMode, false, toolOptionsJSON,
+		geminiYoloMode, false, false, "", toolOptionsJSON,
 	)
 }
 

@@ -30,6 +30,8 @@ func handleSession(profile string, args []string) {
 		handleSessionStart(profile, args[1:])
 	case "stop":
 		handleSessionStop(profile, args[1:])
+	case "remove", "rm":
+		handleSessionRemove(profile, args[1:])
 	case "restart":
 		handleSessionRestart(profile, args[1:])
 	case "fork":
@@ -68,6 +70,7 @@ func printSessionHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  start <id>              Start a session's tmux process")
 	fmt.Println("  stop <id>               Stop/kill session process")
+	fmt.Println("  remove <id>             Remove a stopped/error session from the list")
 	fmt.Println("  restart <id>            Restart session (Claude: reload MCPs)")
 	fmt.Println("  fork <id>               Fork Claude session with context")
 	fmt.Println("  attach <id>             Attach to session interactively")
@@ -287,6 +290,129 @@ func handleSessionStop(profile string, args []string) {
 		"id":      inst.ID,
 		"title":   inst.Title,
 	})
+}
+
+// handleSessionRemove removes a stopped/error session from the session list.
+func handleSessionRemove(profile string, args []string) {
+	fs := flag.NewFlagSet("session remove", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	quiet := fs.Bool("quiet", false, "Minimal output")
+	quietShort := fs.Bool("q", false, "Minimal output (short)")
+	force := fs.Bool("force", false, "Remove even if running/waiting")
+	forceShort := fs.Bool("f", false, "Remove even if running/waiting (short)")
+
+	fs.Usage = func() {
+		fmt.Println("Usage: agent-deck session remove <id|title> [options]")
+		fmt.Println()
+		fmt.Println("Remove a stopped or error session from the session list.")
+		fmt.Println("By default, refuses to remove running or waiting sessions.")
+		fmt.Println()
+		fmt.Println("Options:")
+		fs.PrintDefaults()
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  agent-deck session remove myproject")
+		fmt.Println("  agent-deck session remove abc12345 --json")
+		fmt.Println("  agent-deck session remove myproject -f   # Force remove even if running")
+	}
+
+	if err := fs.Parse(normalizeArgs(fs, args)); err != nil {
+		os.Exit(1)
+	}
+
+	identifier := fs.Arg(0)
+	quietMode := *quiet || *quietShort
+	forceMode := *force || *forceShort
+	out := NewCLIOutput(*jsonOutput, quietMode)
+
+	if identifier == "" {
+		out.Error("session ID or title is required", ErrCodeNotFound)
+		if !*jsonOutput {
+			fs.Usage()
+		}
+		os.Exit(1)
+	}
+
+	// Load sessions
+	storage, instances, groups, err := loadSessionData(profile)
+	if err != nil {
+		out.Error(err.Error(), ErrCodeNotFound)
+		os.Exit(1)
+	}
+
+	// Resolve session
+	inst, errMsg, errCode := ResolveSession(identifier, instances)
+	if inst == nil {
+		out.Error(fmt.Sprintf("%s (profile '%s')", errMsg, storage.Profile()), errCode)
+		if errCode == ErrCodeNotFound {
+			os.Exit(2)
+		}
+		os.Exit(1)
+		return
+	}
+
+	// Block removal of running/waiting sessions unless --force
+	if !forceMode && inst.Exists() {
+		out.Error(
+			fmt.Sprintf("session '%s' is still running; stop it first or use --force", inst.Title),
+			ErrCodeInvalidOperation,
+		)
+		os.Exit(1)
+	}
+
+	removedID := inst.ID
+	removedTitle := inst.Title
+
+	// Kill tmux session if still alive (handles stale status)
+	if inst.Exists() {
+		if err := inst.Kill(); err != nil {
+			if !*jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: failed to kill tmux session: %v\n", err)
+			}
+		}
+	}
+
+	// Clean up worktree if applicable
+	if inst.IsWorktree() {
+		if err := git.RemoveWorktree(inst.WorktreeRepoRoot, inst.WorktreePath, false); err != nil {
+			if !*jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: failed to remove worktree: %v\n", err)
+			}
+		}
+		_ = git.PruneWorktrees(inst.WorktreeRepoRoot)
+	}
+
+	// Direct SQL DELETE to prevent race with TUI force-saves
+	if err := storage.DeleteInstance(removedID); err != nil {
+		if !*jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: direct delete failed: %v\n", err)
+		}
+	}
+
+	// Rebuild instance list without the removed session and save
+	newInstances := make([]*session.Instance, 0, len(instances)-1)
+	for _, s := range instances {
+		if s.ID != removedID {
+			newInstances = append(newInstances, s)
+		}
+	}
+	groupTree := session.NewGroupTreeWithGroups(newInstances, groups)
+
+	if err := storage.SaveWithGroups(newInstances, groupTree); err != nil {
+		out.Error(fmt.Sprintf("failed to save: %v", err), ErrCodeInvalidOperation)
+		os.Exit(1)
+	}
+
+	out.Success(
+		fmt.Sprintf("Removed session: %s (from profile '%s')", removedTitle, storage.Profile()),
+		map[string]interface{}{
+			"success": true,
+			"id":      removedID,
+			"title":   removedTitle,
+			"removed": true,
+			"profile": storage.Profile(),
+		},
+	)
 }
 
 // handleSessionRestart restarts a session

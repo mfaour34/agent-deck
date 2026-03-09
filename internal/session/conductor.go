@@ -410,6 +410,99 @@ func SetupConductor(name, profile string, heartbeatEnabled bool, clearOnCompact 
 	return nil
 }
 
+// SetupEpicRunnerConductor creates the conductor directory and files for an epic runner.
+// It creates the directory at ~/.agent-deck/conductor/epic-<name>/ with CLAUDE.md, POLICY.md,
+// LEARNINGS.md, heartbeat.sh, meta.json, and an initial state.json with the epic ID.
+func SetupEpicRunnerConductor(sessionName, epicID string) error {
+	conductorName := "epic-" + strings.ToLower(epicID)
+
+	dir, err := ConductorNameDir(conductorName)
+	if err != nil {
+		return fmt.Errorf("failed to get conductor dir: %w", err)
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create conductor dir: %w", err)
+	}
+
+	// Write CLAUDE.md from epic-runner template.
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	epicClaudeMD := epicRunnerClaudeMDTemplate
+	if err := os.WriteFile(claudePath, []byte(epicClaudeMD), 0o644); err != nil {
+		return fmt.Errorf("failed to write CLAUDE.md: %w", err)
+	}
+
+	// Write POLICY.md from epic-runner template.
+	policyPath := filepath.Join(dir, "POLICY.md")
+	if err := os.WriteFile(policyPath, []byte(epicRunnerPolicyMDTemplate), 0o644); err != nil {
+		return fmt.Errorf("failed to write POLICY.md: %w", err)
+	}
+
+	// Write LEARNINGS.md (don't overwrite existing).
+	learningsPath := filepath.Join(dir, "LEARNINGS.md")
+	if _, err := os.Stat(learningsPath); os.IsNotExist(err) {
+		if err := os.WriteFile(learningsPath, []byte(conductorLearningsTemplate), 0o644); err != nil {
+			return fmt.Errorf("failed to write LEARNINGS.md: %w", err)
+		}
+	}
+
+	// Write initial state.json with epic ID and empty tickets.
+	statePath := filepath.Join(dir, "state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		state := map[string]interface{}{
+			"epic_id":         epicID,
+			"epic_title":      "",
+			"concurrency_cap": 3,
+			"paused":          false,
+			"tickets":         map[string]interface{}{},
+		}
+		stateJSON, _ := json.MarshalIndent(state, "", "  ")
+		if err := os.WriteFile(statePath, stateJSON, 0o644); err != nil {
+			return fmt.Errorf("failed to write state.json: %w", err)
+		}
+	}
+
+	// Write meta.json.
+	meta := &ConductorMeta{
+		Name:             conductorName,
+		Profile:          DefaultProfile,
+		HeartbeatEnabled: true,
+		Description:      fmt.Sprintf("Epic runner for %s", epicID),
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := SaveConductorMeta(meta); err != nil {
+		return fmt.Errorf("failed to write meta.json: %w", err)
+	}
+
+	// Write heartbeat.sh.
+	sessionTitle := ConductorSessionTitle(conductorName)
+	heartbeat := fmt.Sprintf(`#!/bin/bash
+SESSION="%s"
+STATUS=$(agent-deck session show "$SESSION" --json 2>/dev/null | tr -d '\n' | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+if [ "$STATUS" = "idle" ] || [ "$STATUS" = "waiting" ]; then
+    agent-deck session send "$SESSION" "Heartbeat: Check epic status. Run epic-dag status . and epic-dag next . to see if any tickets are ready. Monitor active child sessions." --no-wait -q
+fi
+`, sessionTitle)
+	heartbeatPath := filepath.Join(dir, "heartbeat.sh")
+	if err := os.WriteFile(heartbeatPath, []byte(heartbeat), 0o755); err != nil {
+		return fmt.Errorf("failed to write heartbeat.sh: %w", err)
+	}
+
+	// Create empty task-log.md.
+	taskLogPath := filepath.Join(dir, "task-log.md")
+	if _, err := os.Stat(taskLogPath); os.IsNotExist(err) {
+		os.WriteFile(taskLogPath, []byte("# Task Log\n"), 0o644)
+	}
+
+	sessionLog.Info("epic_runner_conductor_setup",
+		slog.String("conductor", conductorName),
+		slog.String("epic_id", epicID),
+		slog.String("dir", dir),
+	)
+
+	return nil
+}
+
 // InstallHeartbeatScript writes the heartbeat.sh script for a conductor.
 // This is a standalone heartbeat that works without Telegram.
 func InstallHeartbeatScript(name, profile string) error {

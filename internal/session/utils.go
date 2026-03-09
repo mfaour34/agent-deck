@@ -56,8 +56,10 @@ func GetDirectoryCompletions(input string) ([]string, error) {
 		dir = input
 		prefix = ""
 	} else if info, err := os.Stat(input); err == nil && info.IsDir() {
-		// Exact directory match without trailing slash - return itself
-		return []string{originalInput}, nil
+		// Exact directory match without trailing slash — list children so the
+		// user can drill deeper on the next Tab press.
+		dir = input
+		prefix = ""
 	} else {
 		dir = filepath.Dir(input)
 		prefix = filepath.Base(input)
@@ -91,6 +93,27 @@ func GetDirectoryCompletions(input string) ([]string, error) {
 	}
 
 	return matches, nil
+}
+
+// LongestCommonPrefix returns the longest common prefix of a set of strings.
+// Returns empty string for empty input.
+func LongestCommonPrefix(strs []string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	prefix := strs[0]
+	for _, s := range strs[1:] {
+		for i := 0; i < len(prefix); i++ {
+			if i >= len(s) || s[i] != prefix[i] {
+				prefix = prefix[:i]
+				break
+			}
+		}
+		if prefix == "" {
+			return ""
+		}
+	}
+	return prefix
 }
 
 // CompletionCycler manages the state of directory autocomplete.

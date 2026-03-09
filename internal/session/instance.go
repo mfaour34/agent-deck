@@ -75,6 +75,10 @@ type Instance struct {
 	WorktreeRepoRoot string `json:"worktree_repo_root,omitempty"` // Original repo root
 	WorktreeBranch   string `json:"worktree_branch,omitempty"`    // Branch name in worktree
 
+	// Epic runner support
+	EpicRunnerEnabled bool   `json:"epic_runner_enabled,omitempty"` // Session is an epic runner conductor
+	EpicID            string `json:"epic_id,omitempty"`             // Jira epic ID (e.g. MOVE-123)
+
 	Command        string    `json:"command"`
 	Wrapper        string    `json:"wrapper,omitempty"` // Optional wrapper command with {command} placeholder
 	Tool           string    `json:"tool"`
