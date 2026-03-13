@@ -14,6 +14,14 @@ type ToolOptions interface {
 	ToArgs() []string
 }
 
+// claudeModels is the list of available Claude model aliases
+var claudeModels = []string{"sonnet", "opus", "haiku"}
+
+// GetAvailableClaudeModels returns the list of available Claude model aliases
+func GetAvailableClaudeModels() []string {
+	return claudeModels
+}
+
 // ClaudeOptions holds launch options for Claude Code sessions
 type ClaudeOptions struct {
 	// SessionMode: "new" (default), "continue" (-c), or "resume" (-r)
@@ -29,6 +37,8 @@ type ClaudeOptions struct {
 	UseChrome bool `json:"use_chrome,omitempty"`
 	// UseTeammateMode adds --teammate-mode tmux flag
 	UseTeammateMode bool `json:"use_teammate_mode,omitempty"`
+	// Model selects the Claude model alias (e.g. "sonnet", "opus", "haiku")
+	Model string `json:"model,omitempty"`
 
 	// Transient fields for worktree fork (not persisted)
 	WorkDir          string `json:"-"`
@@ -69,6 +79,9 @@ func (o *ClaudeOptions) ToArgs() []string {
 	if o.UseTeammateMode {
 		args = append(args, "--teammate-mode", "tmux")
 	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
 
 	return args
 }
@@ -89,6 +102,9 @@ func (o *ClaudeOptions) ToArgsForFork() []string {
 	if o.UseTeammateMode {
 		args = append(args, "--teammate-mode", "tmux")
 	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
 
 	return args
 }
@@ -97,6 +113,7 @@ func (o *ClaudeOptions) ToArgsForFork() []string {
 func NewClaudeOptions(config *UserConfig) *ClaudeOptions {
 	opts := &ClaudeOptions{
 		SessionMode: "new",
+		Model:       "sonnet",
 	}
 	if config != nil {
 		opts.SkipPermissions = config.Claude.GetDangerousMode()

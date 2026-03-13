@@ -547,6 +547,9 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 		if opts.UseTeammateMode {
 			flags = append(flags, "--teammate-mode tmux")
 		}
+		if opts.Model != "" {
+			flags = append(flags, "--model", opts.Model)
+		}
 	}
 
 	if len(flags) == 0 {

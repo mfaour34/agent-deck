@@ -19,6 +19,8 @@ type ClaudeOptionsPanel struct {
 	allowSkipPermissions bool
 	useChrome            bool
 	useTeammateMode      bool
+	// Model selection: index into session.GetAvailableClaudeModels()
+	modelCursor int
 	// Focus tracking
 	focusIndex int
 	// Whether this panel is for fork dialog (fewer options)
@@ -46,6 +48,7 @@ func NewClaudeOptionsPanel() *ClaudeOptionsPanel {
 
 	return &ClaudeOptionsPanel{
 		sessionMode:   0, // new
+		modelCursor:   0, // sonnet (default)
 		resumeIDInput: resumeInput,
 		isForkMode:    false,
 		focusCount:    5, // Will adjust dynamically
@@ -88,6 +91,13 @@ func (p *ClaudeOptionsPanel) SetFromOptions(opts *session.ClaudeOptions) {
 	p.allowSkipPermissions = opts.AllowSkipPermissions
 	p.useChrome = opts.UseChrome
 	p.useTeammateMode = opts.UseTeammateMode
+	p.modelCursor = 0 // default: sonnet
+	for i, m := range session.GetAvailableClaudeModels() {
+		if m == opts.Model {
+			p.modelCursor = i
+			break
+		}
+	}
 	p.updateInputFocus()
 	p.focusCount = p.getFocusCount()
 }
@@ -116,11 +126,17 @@ func (p *ClaudeOptionsPanel) AtTop() bool {
 
 // GetOptions returns current options as ClaudeOptions
 func (p *ClaudeOptionsPanel) GetOptions() *session.ClaudeOptions {
+	models := session.GetAvailableClaudeModels()
+	model := ""
+	if p.modelCursor >= 0 && p.modelCursor < len(models) {
+		model = models[p.modelCursor]
+	}
 	opts := &session.ClaudeOptions{
 		SkipPermissions:      p.skipPermissions,
 		AllowSkipPermissions: p.allowSkipPermissions,
 		UseChrome:            p.useChrome,
 		UseTeammateMode:      p.useTeammateMode,
+		Model:                model,
 	}
 
 	if !p.isForkMode {
@@ -177,17 +193,32 @@ func (p *ClaudeOptionsPanel) Update(msg tea.Msg) tea.Cmd {
 			return nil
 
 		case "left", "right":
-			// For session mode radio buttons
-			if !p.isForkMode && p.focusIndex == 0 {
-				if msg.String() == "left" {
-					p.sessionMode--
-					if p.sessionMode < 0 {
-						p.sessionMode = 2
+			if !p.isForkMode {
+				// Session mode radio
+				if p.focusIndex == 0 {
+					if msg.String() == "left" {
+						p.sessionMode--
+						if p.sessionMode < 0 {
+							p.sessionMode = 2
+						}
+					} else {
+						p.sessionMode = (p.sessionMode + 1) % 3
 					}
-				} else {
-					p.sessionMode = (p.sessionMode + 1) % 3
+					return nil
 				}
-				return nil
+				// Model radio
+				if p.getFocusType() == "model" {
+					models := session.GetAvailableClaudeModels()
+					if msg.String() == "left" {
+						p.modelCursor--
+						if p.modelCursor < 0 {
+							p.modelCursor = len(models) - 1
+						}
+					} else {
+						p.modelCursor = (p.modelCursor + 1) % len(models)
+					}
+					return nil
+				}
 			}
 		}
 	}
@@ -219,6 +250,8 @@ func (p *ClaudeOptionsPanel) handleSpaceKey() {
 		case "sessionMode":
 			// Cycle through modes on space
 			p.sessionMode = (p.sessionMode + 1) % 3
+		case "model":
+			p.modelCursor = (p.modelCursor + 1) % len(session.GetAvailableClaudeModels())
 		case "skipPermissions":
 			p.skipPermissions = !p.skipPermissions
 		case "chrome":
@@ -253,16 +286,20 @@ func (p *ClaudeOptionsPanel) getFocusType() string {
 			}
 			idx-- // Adjust for missing resume input
 		}
-		// 2: skip permissions
+		// 1 (or 2 with resume): model
 		if idx == 1 {
+			return "model"
+		}
+		// 2: skip permissions
+		if idx == 2 {
 			return "skipPermissions"
 		}
 		// 3: chrome
-		if idx == 2 {
+		if idx == 3 {
 			return "chrome"
 		}
 		// 4: teammate mode
-		if idx == 3 {
+		if idx == 4 {
 			return "teammateMode"
 		}
 	}
@@ -275,7 +312,7 @@ func (p *ClaudeOptionsPanel) getFocusCount() int {
 		return 3 // skip, chrome, teammate
 	}
 
-	count := 4 // session mode, skip, chrome, teammate
+	count := 5 // session mode, model, skip, chrome, teammate
 	if p.sessionMode == 2 {
 		count++ // resume input
 	}
@@ -350,6 +387,18 @@ func (p *ClaudeOptionsPanel) viewNewMode(labelStyle, activeStyle, dimStyle, head
 		}
 		focusIdx++
 	}
+
+	// Model radio buttons
+	modelLabel := "     Model: "
+	if p.focusIndex == focusIdx {
+		modelLabel = activeStyle.Render("▶    Model: ")
+	}
+	content += modelLabel
+	for i, m := range session.GetAvailableClaudeModels() {
+		content += p.renderRadio(m, p.modelCursor == i, p.focusIndex == focusIdx) + "  "
+	}
+	content += "\n"
+	focusIdx++
 
 	// Skip permissions checkbox
 	content += renderCheckboxLine("Skip permissions", p.skipPermissions, p.focusIndex == focusIdx)
