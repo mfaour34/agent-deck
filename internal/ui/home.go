@@ -491,6 +491,12 @@ type previewDebounceMsg struct {
 	windowIndex int    // -1 for session, >= 0 for specific window
 }
 
+// epicRunnerKickoffMsg is sent after the async initial prompt is delivered to an epic runner conductor.
+type epicRunnerKickoffMsg struct {
+	sessionID string
+	err       error
+}
+
 // analyticsFetchedMsg is sent when async analytics parsing is complete
 type analyticsFetchedMsg struct {
 	sessionID       string
@@ -2871,8 +2877,34 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Use forceSave to bypass mtime check - new session creation MUST persist
 			h.forceSaveInstances()
 
-			// Start fetching preview for the new session
-			return h, h.fetchPreview(msg.instance, msg.instance.ID, -1)
+			// If this is an epic runner session, send the kickoff prompt asynchronously
+			cmds := []tea.Cmd{h.fetchPreview(msg.instance, msg.instance.ID, -1)}
+			if msg.instance.EpicRunnerEnabled && msg.instance.EpicID != "" {
+				inst := msg.instance
+				cmds = append(cmds, func() tea.Msg {
+					prompt := fmt.Sprintf(
+						"You are orchestrating epic %s. Read the epic from Jira to get the title and all child tickets. "+
+							"Determine dependencies between tickets based on their descriptions. "+
+							"Populate state.json using epic-dag, then start spawning agents for ready tickets.",
+						inst.EpicID,
+					)
+					err := session.SendSessionMessageReliable("", inst.ID, prompt)
+					return epicRunnerKickoffMsg{sessionID: inst.ID, err: err}
+				})
+			}
+			return h, tea.Batch(cmds...)
+		}
+		return h, nil
+
+	case epicRunnerKickoffMsg:
+		if msg.err != nil {
+			uiLog.Error("epic_runner_kickoff_failed",
+				slog.String("session", msg.sessionID),
+				slog.String("error", msg.err.Error()),
+			)
+			h.setError(fmt.Errorf("epic runner kickoff failed: %w", msg.err))
+		} else {
+			uiLog.Info("epic_runner_kickoff_sent", slog.String("session", msg.sessionID))
 		}
 		return h, nil
 
