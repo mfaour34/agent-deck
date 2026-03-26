@@ -4464,6 +4464,13 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
+				if item.Session.GetStatusThreadSafe() == session.StatusCompleted {
+					if !h.hasActiveAnimation(item.Session.ID) {
+						h.resumingSessions[item.Session.ID] = time.Now()
+						return h, h.restartSession(item.Session)
+					}
+					return h, nil
+				}
 				if item.Session.Exists() {
 					// Pane dead (process exited) — restart instead of attaching to dead pane.
 					tmuxSess := item.Session.GetTmuxSession()
