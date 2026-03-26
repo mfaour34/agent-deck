@@ -8781,6 +8781,9 @@ func (h *Home) renderSessionItem(
 	case session.StatusError:
 		statusIcon = "✕"
 		statusStyle = SessionStatusError
+	case session.StatusCompleted:
+		statusIcon = "✓"
+		statusStyle = lipgloss.NewStyle().Foreground(ColorComment)
 	default:
 		statusIcon = "○"
 		statusStyle = SessionStatusIdle
