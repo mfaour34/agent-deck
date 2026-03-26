@@ -79,6 +79,12 @@ type Instance struct {
 	EpicRunnerEnabled bool   `json:"epic_runner_enabled,omitempty"` // Session is an epic runner conductor
 	EpicID            string `json:"epic_id,omitempty"`             // Jira epic ID (e.g. MOVE-123)
 
+	// Multi-repo support
+	MultiRepoEnabled   bool                `json:"multi_repo_enabled,omitempty"`
+	AdditionalPaths    []string            `json:"additional_paths,omitempty"`    // Paths beyond ProjectPath
+	MultiRepoTempDir   string              `json:"multi_repo_temp_dir,omitempty"` // Temp cwd for multi-repo sessions
+	MultiRepoWorktrees []MultiRepoWorktree `json:"multi_repo_worktrees,omitempty"`
+
 	Command        string    `json:"command"`
 	Wrapper        string    `json:"wrapper,omitempty"` // Optional wrapper command with {command} placeholder
 	Tool           string    `json:"tool"`
@@ -192,6 +198,40 @@ type SandboxConfig struct {
 	ExtraVolumes map[string]string `json:"extra_volumes,omitempty"`
 }
 
+// resolveRealPath resolves symlinks to get the canonical path for comparison.
+// Falls back to the original path on error (e.g., path doesn't exist yet).
+func resolveRealPath(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
+}
+
+// DeduplicateDirnames returns unique directory names for the given paths.
+// When multiple paths share the same basename, a numeric suffix is appended (e.g., "src-1").
+func DeduplicateDirnames(paths []string) []string {
+	seen := make(map[string]int)
+	result := make([]string, len(paths))
+	for i, p := range paths {
+		dirname := filepath.Base(p)
+		if n := seen[dirname]; n > 0 {
+			result[i] = fmt.Sprintf("%s-%d", dirname, n)
+		} else {
+			result[i] = dirname
+		}
+		seen[dirname]++
+	}
+	return result
+}
+
+// MultiRepoWorktree tracks a worktree created for one repo in a multi-repo session.
+type MultiRepoWorktree struct {
+	OriginalPath string `json:"original_path"`
+	WorktreePath string `json:"worktree_path"`
+	RepoRoot     string `json:"repo_root"`
+	Branch       string `json:"branch"`
+}
+
 // IsSandboxed returns true if this instance is configured to run in a Docker sandbox.
 func (inst *Instance) IsSandboxed() bool {
 	return inst.Sandbox != nil && inst.Sandbox.Enabled
@@ -200,6 +240,35 @@ func (inst *Instance) IsSandboxed() bool {
 // IsSSH returns true if this instance runs on a remote host via SSH.
 func (inst *Instance) IsSSH() bool {
 	return inst.SSHHost != ""
+}
+
+// IsMultiRepo returns true if this session has multi-repo mode enabled.
+func (inst *Instance) IsMultiRepo() bool {
+	return inst.MultiRepoEnabled
+}
+
+// AllProjectPaths returns all project paths: [ProjectPath] + AdditionalPaths.
+func (inst *Instance) AllProjectPaths() []string {
+	paths := []string{inst.ProjectPath}
+	paths = append(paths, inst.AdditionalPaths...)
+	return paths
+}
+
+// EffectiveWorkingDir returns the working directory for this session.
+// For multi-repo sessions, this is the temp dir; otherwise the ProjectPath.
+func (inst *Instance) EffectiveWorkingDir() string {
+	if inst.MultiRepoEnabled && inst.MultiRepoTempDir != "" {
+		return inst.MultiRepoTempDir
+	}
+	return inst.ProjectPath
+}
+
+// CleanupMultiRepoTempDir removes the multi-repo temporary directory.
+func (inst *Instance) CleanupMultiRepoTempDir() error {
+	if inst.MultiRepoTempDir == "" {
+		return nil
+	}
+	return os.RemoveAll(inst.MultiRepoTempDir)
 }
 
 // NewSandboxConfig builds a SandboxConfig from CLI flags and user settings.
@@ -532,6 +601,23 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 	// --add-dir: Grant subagent access to parent's project directory (for worktrees, etc.)
 	if i.ParentProjectPath != "" {
 		flags = append(flags, fmt.Sprintf("--add-dir %s", i.ParentProjectPath))
+	}
+
+	// Multi-repo: pass all project paths via --add-dir (deduplicated, excluding cwd)
+	if i.MultiRepoEnabled {
+		seen := make(map[string]bool)
+		if i.ParentProjectPath != "" {
+			seen[resolveRealPath(i.ParentProjectPath)] = true // already added above
+		}
+		seen[resolveRealPath(i.EffectiveWorkingDir())] = true // exclude cwd
+		for _, p := range i.AllProjectPaths() {
+			real := resolveRealPath(p)
+			if seen[real] {
+				continue
+			}
+			seen[real] = true
+			flags = append(flags, fmt.Sprintf("--add-dir %s", p))
+		}
 	}
 
 	// Options-level flags
