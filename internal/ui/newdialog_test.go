@@ -70,7 +70,7 @@ func TestDialogPresetCommands(t *testing.T) {
 func TestDialogGetValues(t *testing.T) {
 	d := NewNewDialog()
 	d.nameInput.SetValue("my-session")
-	d.pathInput.SetValue("/tmp/project")
+	d.pathInputs[0].SetValue("/tmp/project")
 	d.commandCursor = 1 // claude
 
 	name, path, command := d.GetValues()
@@ -89,7 +89,7 @@ func TestDialogGetValues(t *testing.T) {
 func TestDialogExpandTilde(t *testing.T) {
 	d := NewNewDialog()
 	d.nameInput.SetValue("test")
-	d.pathInput.SetValue("~/projects")
+	d.pathInputs[0].SetValue("~/projects")
 
 	_, path, _ := d.GetValues()
 
@@ -145,8 +145,8 @@ func TestNewDialog_ShowSuggestionsDisabled(t *testing.T) {
 	d := NewNewDialog()
 
 	// ShowSuggestions should be disabled — we use our own dropdown with filtering
-	if d.pathInput.ShowSuggestions {
-		t.Error("expected ShowSuggestions to be false on pathInput (we use custom dropdown)")
+	if d.pathInputs[0].ShowSuggestions {
+		t.Error("expected ShowSuggestions to be false on pathInputs[0] (we use custom dropdown)")
 	}
 }
 
@@ -162,7 +162,7 @@ func TestNewDialog_SuggestionFiltering(t *testing.T) {
 	d.SetPathSuggestions(paths)
 
 	// Type "project" to filter
-	d.pathInput.SetValue("project")
+	d.pathInputs[0].SetValue("project")
 	d.filterPathSuggestions()
 
 	if len(d.pathSuggestions) != 2 {
@@ -220,7 +220,7 @@ func TestNewDialog_MalformedPathFix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := NewNewDialog()
-			d.pathInput.SetValue(tt.input)
+			d.pathInputs[0].SetValue(tt.input)
 
 			_, path, _ := d.GetValues()
 
@@ -251,7 +251,7 @@ func TestNewDialog_TabDoesNotOverwriteCustomPath(t *testing.T) {
 
 	// User types a completely NEW path that doesn't match any suggestion
 	customPath := "/Users/test/brand-new-project"
-	d.pathInput.SetValue(customPath)
+	d.pathInputs[0].SetValue(customPath)
 
 	// User presses Tab to move to command selection
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -263,9 +263,9 @@ func TestNewDialog_TabDoesNotOverwriteCustomPath(t *testing.T) {
 		t.Errorf("Tab overwrote custom path!\nGot: %q\nWant: %q\nThis is the bug from Issue #22", path, customPath)
 	}
 
-	// Focus should have moved to multi-repo field
+	// Focus should have moved to command field
 	if d.focusIndex != 2 {
-		t.Errorf("focusIndex = %d, want 2 (multi-repo field)", d.focusIndex)
+		t.Errorf("focusIndex = %d, want 2 (command field)", d.focusIndex)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestNewDialog_TabAppliesSuggestionWhenNavigated(t *testing.T) {
 	d.updateFocus()
 
 	// User types something, then navigates to suggestion with Ctrl+N
-	d.pathInput.SetValue("/some/partial")
+	d.pathInputs[0].SetValue("/some/partial")
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 
 	// Now Tab should apply the suggestion
@@ -336,7 +336,7 @@ func TestNewDialog_TypingResetsSuggestionNavigation(t *testing.T) {
 	}
 
 	// Set a custom path and press Tab
-	d.pathInput.SetValue("/my/new/path")
+	d.pathInputs[0].SetValue("/my/new/path")
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 
 	_, path, _ := d.GetValues()
@@ -385,7 +385,7 @@ func TestNewDialog_RestoreSnapshot_RestoresToolOptionsAndCommandInput(t *testing
 		UseTeammateMode:      true,
 	}
 	d.nameInput.SetValue("orig-name")
-	d.pathInput.SetValue("/tmp/orig")
+	d.pathInputs[0].SetValue("/tmp/orig")
 	d.commandCursor = 0
 	d.commandInput.SetValue("echo original")
 	d.claudeOptions.SetFromOptions(originalClaude)
@@ -396,7 +396,7 @@ func TestNewDialog_RestoreSnapshot_RestoresToolOptionsAndCommandInput(t *testing
 
 	// Mutate state to ensure restore actually rewinds everything.
 	d.nameInput.SetValue("mutated-name")
-	d.pathInput.SetValue("/tmp/mutated")
+	d.pathInputs[0].SetValue("/tmp/mutated")
 	d.commandCursor = 1
 	d.commandInput.SetValue("echo mutated")
 	d.claudeOptions.SetFromOptions(&session.ClaudeOptions{SessionMode: "new"})
@@ -408,7 +408,7 @@ func TestNewDialog_RestoreSnapshot_RestoresToolOptionsAndCommandInput(t *testing
 	if got := d.nameInput.Value(); got != "orig-name" {
 		t.Fatalf("nameInput = %q, want %q", got, "orig-name")
 	}
-	if got := d.pathInput.Value(); got != "/tmp/orig" {
+	if got := d.pathInputs[0].Value(); got != "/tmp/orig" {
 		t.Fatalf("pathInput = %q, want %q", got, "/tmp/orig")
 	}
 	if d.commandCursor != 0 {
@@ -470,7 +470,7 @@ func TestNewDialog_GetValuesWithWorktree(t *testing.T) {
 	dialog.worktreeEnabled = true
 	dialog.branchInput.SetValue("feature/test")
 	dialog.nameInput.SetValue("test-session")
-	dialog.pathInput.SetValue("/tmp/project")
+	dialog.pathInputs[0].SetValue("/tmp/project")
 
 	name, path, command, branch, enabled := dialog.GetValuesWithWorktree()
 
@@ -509,7 +509,7 @@ func TestNewDialog_GetValuesWithWorktree_Disabled(t *testing.T) {
 func TestNewDialog_Validate_WorktreeEnabled_EmptyBranch(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.nameInput.SetValue("test-session")
-	dialog.pathInput.SetValue("/tmp/project")
+	dialog.pathInputs[0].SetValue("/tmp/project")
 	dialog.worktreeEnabled = true
 	dialog.branchInput.SetValue("")
 
@@ -525,7 +525,7 @@ func TestNewDialog_Validate_WorktreeEnabled_EmptyBranch(t *testing.T) {
 func TestNewDialog_Validate_WorktreeEnabled_InvalidBranch(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.nameInput.SetValue("test-session")
-	dialog.pathInput.SetValue("/tmp/project")
+	dialog.pathInputs[0].SetValue("/tmp/project")
 	dialog.worktreeEnabled = true
 	dialog.branchInput.SetValue("feature..test") // Invalid: contains ..
 
@@ -541,7 +541,7 @@ func TestNewDialog_Validate_WorktreeEnabled_InvalidBranch(t *testing.T) {
 func TestNewDialog_Validate_WorktreeEnabled_ValidBranch(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.nameInput.SetValue("test-session")
-	dialog.pathInput.SetValue("/tmp/project")
+	dialog.pathInputs[0].SetValue("/tmp/project")
 	dialog.worktreeEnabled = true
 	dialog.branchInput.SetValue("feature/test-branch")
 
@@ -554,7 +554,7 @@ func TestNewDialog_Validate_WorktreeEnabled_ValidBranch(t *testing.T) {
 func TestNewDialog_Validate_WorktreeDisabled_IgnoresBranch(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.nameInput.SetValue("test-session")
-	dialog.pathInput.SetValue("/tmp/project")
+	dialog.pathInputs[0].SetValue("/tmp/project")
 	dialog.worktreeEnabled = false
 	dialog.branchInput.SetValue("") // Empty branch, but worktree disabled
 
@@ -585,8 +585,8 @@ func TestNewDialog_ShowInGroup_SetsDefaultPath(t *testing.T) {
 	dialog.ShowInGroup("projects", "Projects", "/test/default/path")
 
 	// Verify path input is set to the default path
-	if dialog.pathInput.Value() != "/test/default/path" {
-		t.Errorf("pathInput should be set to default path, got: %q", dialog.pathInput.Value())
+	if dialog.pathInputs[0].Value() != "/test/default/path" {
+		t.Errorf("pathInput should be set to default path, got: %q", dialog.pathInputs[0].Value())
 	}
 }
 
@@ -598,7 +598,7 @@ func TestNewDialog_ShowInGroup_EmptyDefaultPath(t *testing.T) {
 	// With empty default path, it should fall back to current working directory
 	// We can't test the exact value, but we can verify it's not empty
 	// (assuming we're not in a system temp directory)
-	value := dialog.pathInput.Value()
+	value := dialog.pathInputs[0].Value()
 	if value == "" {
 		t.Error("pathInput should not be empty when defaultPath is empty (should use cwd)")
 	}
@@ -620,7 +620,7 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 	dialog.sandboxEnabled = false
 	dialog.inheritedSettings = nil
 	dialog.rebuildFocusTargets()
-	dialog.focusIndex = 3 // Command field
+	dialog.focusIndex = 2 // Command field
 
 	// Press 'w' to toggle worktree.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
@@ -635,7 +635,7 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 	}
 
 	// Press 'w' again to disable (need to be on command field).
-	dialog.focusIndex = 3
+	dialog.focusIndex = 2
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 
 	if dialog.worktreeEnabled {
@@ -650,7 +650,7 @@ func TestNewDialog_TabNavigationWithWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = true
-	dialog.pathInput.SetValue("/tmp/nonexistent-test-path-xyz")
+	dialog.pathInputs[0].SetValue("/tmp/nonexistent-test-path-xyz")
 	dialog.rebuildFocusTargets()
 
 	branchIdx := dialog.indexOf(focusBranch)
@@ -682,7 +682,7 @@ func TestNewDialog_TabNavigationWithoutWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = false
-	dialog.pathInput.SetValue("/tmp/nonexistent-test-path-xyz")
+	dialog.pathInputs[0].SetValue("/tmp/nonexistent-test-path-xyz")
 	dialog.rebuildFocusTargets()
 
 	maxIdx := len(dialog.focusTargets) - 1
@@ -706,7 +706,7 @@ func TestNewDialog_View_ShowsWorktreeCheckbox(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.SetSize(80, 40)
 	dialog.Show()
-	dialog.focusIndex = 3 // Command field
+	dialog.focusIndex = 2 // Command field
 
 	view := dialog.View()
 
@@ -770,7 +770,7 @@ func TestNewDialog_CharLimitMatchesMaxNameLength(t *testing.T) {
 
 func TestNewDialog_CharLimitTruncatesLongNames(t *testing.T) {
 	d := NewNewDialog()
-	d.pathInput.SetValue("/tmp/project")
+	d.pathInputs[0].SetValue("/tmp/project")
 	// Try to set a name longer than MaxNameLength via textinput
 	longName := strings.Repeat("a", MaxNameLength+10)
 	d.nameInput.SetValue(longName)
@@ -790,7 +790,7 @@ func TestNewDialog_CharLimitTruncatesLongNames(t *testing.T) {
 
 func TestNewDialog_Validate_NameAtMaxLength(t *testing.T) {
 	d := NewNewDialog()
-	d.pathInput.SetValue("/tmp/project")
+	d.pathInputs[0].SetValue("/tmp/project")
 	exactName := strings.Repeat("a", MaxNameLength)
 	d.nameInput.SetValue(exactName)
 
@@ -835,7 +835,7 @@ func TestNewDialog_WorktreeCheckbox_SpaceToggle(t *testing.T) {
 	dialog.sandboxEnabled = false
 	dialog.inheritedSettings = nil
 	dialog.rebuildFocusTargets()
-	dialog.focusIndex = 4 // Worktree checkbox
+	dialog.focusIndex = 3 // Worktree checkbox
 
 	// Space toggles worktree on.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
@@ -850,7 +850,7 @@ func TestNewDialog_WorktreeCheckbox_SpaceToggle(t *testing.T) {
 	}
 
 	// Navigate back and space again to disable.
-	dialog.focusIndex = 4
+	dialog.focusIndex = 3
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	if dialog.worktreeEnabled {
@@ -862,7 +862,7 @@ func TestNewDialog_SandboxCheckbox_SpaceToggle(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.Show()
 	dialog.sandboxEnabled = false // Ensure known initial state.
-	dialog.focusIndex = 5         // Sandbox checkbox
+	dialog.focusIndex = 4         // Sandbox checkbox
 
 	// Space toggles sandbox on.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
@@ -872,7 +872,7 @@ func TestNewDialog_SandboxCheckbox_SpaceToggle(t *testing.T) {
 	}
 
 	// Space again toggles off.
-	dialog.focusIndex = 5
+	dialog.focusIndex = 4
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	if dialog.sandboxEnabled {
@@ -886,7 +886,7 @@ func TestNewDialog_CheckboxesFocusIndependently(t *testing.T) {
 	dialog.Show()
 
 	// Focus on worktree checkbox — only it should highlight.
-	dialog.focusIndex = 4
+	dialog.focusIndex = 3
 	view := dialog.View()
 
 	// Worktree line should have the focus indicator.
@@ -895,7 +895,7 @@ func TestNewDialog_CheckboxesFocusIndependently(t *testing.T) {
 	}
 
 	// Focus on sandbox checkbox — only it should highlight.
-	dialog.focusIndex = 5
+	dialog.focusIndex = 4
 	view = dialog.View()
 
 	if !strings.Contains(view, "Run in Docker sandbox") {
@@ -966,7 +966,7 @@ func TestNewDialog_SoftSelect_InitialState(t *testing.T) {
 	if !d.pathSoftSelected {
 		t.Error("pathSoftSelected should be true after Show()")
 	}
-	if d.pathInput.Value() == "" {
+	if d.pathInputs[0].Value() == "" {
 		t.Error("path should be pre-filled with CWD after Show()")
 	}
 }
@@ -980,7 +980,7 @@ func TestNewDialog_SoftSelect_TypeClearsField(t *testing.T) {
 	d.focusIndex = 1
 	d.updateFocus()
 
-	originalPath := d.pathInput.Value()
+	originalPath := d.pathInputs[0].Value()
 	if originalPath == "" {
 		t.Fatal("path should be pre-filled")
 	}
@@ -992,7 +992,7 @@ func TestNewDialog_SoftSelect_TypeClearsField(t *testing.T) {
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
 	// Field should have only the typed character (old value cleared)
-	val := d.pathInput.Value()
+	val := d.pathInputs[0].Value()
 	if val != "x" {
 		t.Errorf("path = %q, want %q (old value should be replaced)", val, "x")
 	}
@@ -1016,8 +1016,8 @@ func TestNewDialog_SoftSelect_BackspaceClearsField(t *testing.T) {
 	// Press backspace while soft-selected
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 
-	if d.pathInput.Value() != "" {
-		t.Errorf("path should be empty after backspace, got %q", d.pathInput.Value())
+	if d.pathInputs[0].Value() != "" {
+		t.Errorf("path should be empty after backspace, got %q", d.pathInputs[0].Value())
 	}
 	if d.pathSoftSelected {
 		t.Error("pathSoftSelected should be false after backspace")
@@ -1032,7 +1032,7 @@ func TestNewDialog_SoftSelect_MovementExits(t *testing.T) {
 	d.focusIndex = 1
 	d.updateFocus()
 
-	originalPath := d.pathInput.Value()
+	originalPath := d.pathInputs[0].Value()
 	if !d.pathSoftSelected {
 		t.Fatal("pathSoftSelected should be true")
 	}
@@ -1041,8 +1041,8 @@ func TestNewDialog_SoftSelect_MovementExits(t *testing.T) {
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyLeft})
 
 	// Value should be preserved
-	if d.pathInput.Value() != originalPath {
-		t.Errorf("path = %q, want %q (value should be preserved)", d.pathInput.Value(), originalPath)
+	if d.pathInputs[0].Value() != originalPath {
+		t.Errorf("path = %q, want %q (value should be preserved)", d.pathInputs[0].Value(), originalPath)
 	}
 	if d.pathSoftSelected {
 		t.Error("pathSoftSelected should be false after Left key")
@@ -1057,7 +1057,7 @@ func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 	d.focusIndex = 1
 	d.updateFocus()
 
-	originalPath := d.pathInput.Value()
+	originalPath := d.pathInputs[0].Value()
 	if !d.pathSoftSelected {
 		t.Fatal("pathSoftSelected should be true")
 	}
@@ -1067,13 +1067,13 @@ func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 
 	// Value should be the original path (possibly with trailing separator from completion).
 	expected := originalPath + string(os.PathSeparator)
-	if d.pathInput.Value() != expected && d.pathInput.Value() != originalPath {
-		t.Errorf("path = %q, want %q or %q (Tab should accept/complete)", d.pathInput.Value(), expected, originalPath)
+	if d.pathInputs[0].Value() != expected && d.pathInputs[0].Value() != originalPath {
+		t.Errorf("path = %q, want %q or %q (Tab should accept/complete)", d.pathInputs[0].Value(), expected, originalPath)
 	}
 	// Second Tab: advance focus past path field.
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 
-	// Focus should have moved forward (focusMultiRepo is between path and command)
+	// Focus should have moved forward (to command field)
 	if d.focusIndex < 2 {
 		t.Errorf("focusIndex = %d, want >= 2 (should move forward)", d.focusIndex)
 	}
@@ -1120,7 +1120,7 @@ func TestNewDialog_SoftSelect_ReactivatesOnRefocus(t *testing.T) {
 	}
 
 	// Set a value back and Tab away
-	d.pathInput.SetValue("/some/path")
+	d.pathInputs[0].SetValue("/some/path")
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab}) // move to command
 
 	// Shift+Tab back to path
@@ -1144,7 +1144,7 @@ func TestNewDialog_FilterPaths_SubstringMatch(t *testing.T) {
 		"/Users/test/skulking-around",
 	})
 
-	d.pathInput.SetValue("skulk")
+	d.pathInputs[0].SetValue("skulk")
 	d.filterPathSuggestions()
 
 	if len(d.pathSuggestions) != 2 {
@@ -1159,7 +1159,7 @@ func TestNewDialog_FilterPaths_CaseInsensitive(t *testing.T) {
 		"/Users/test/other",
 	})
 
-	d.pathInput.SetValue("MYPROJECT")
+	d.pathInputs[0].SetValue("MYPROJECT")
 	d.filterPathSuggestions()
 
 	if len(d.pathSuggestions) != 1 {
@@ -1174,7 +1174,7 @@ func TestNewDialog_FilterPaths_NoMatch(t *testing.T) {
 		"/Users/test/project-beta",
 	})
 
-	d.pathInput.SetValue("zzz")
+	d.pathInputs[0].SetValue("zzz")
 	d.filterPathSuggestions()
 
 	if len(d.pathSuggestions) != 0 {
@@ -1191,7 +1191,7 @@ func TestNewDialog_FilterPaths_EmptyInput(t *testing.T) {
 	}
 	d.SetPathSuggestions(paths)
 
-	d.pathInput.SetValue("")
+	d.pathInputs[0].SetValue("")
 	d.filterPathSuggestions()
 
 	if len(d.pathSuggestions) != 3 {
