@@ -75,8 +75,6 @@ type NewDialog struct {
 	// Inline validation error displayed inside the dialog.
 	validationErr string
 	pathCycler       session.CompletionCycler // Path autocomplete state.
-	tabCompletions   []string                // filesystem completions shown in dropdown.
-	tabCompletionIdx int                     // selected index in tabCompletions dropdown.
 	// Recent sessions picker.
 	recentSessions      []*statedb.RecentSessionRow
 	recentSessionCursor int
@@ -218,7 +216,6 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 	d.suggestionNavigated = false // reset on show
 	d.pathSuggestionCursor = 0    // reset cursor too
 	d.pathCycler.Reset()          // clear stale autocomplete matches from previous show
-	d.tabCompletions = nil
 	d.showRecentPicker = false    // reset recent picker
 	d.recentSessionCursor = 0
 	d.pathInput.Blur()
@@ -797,7 +794,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.pathInput.SetCursor(0)
 				d.pathInput.Focus()
 				d.pathCycler.Reset()
-				d.tabCompletions = nil
 				// DON'T return — let the rune reach textinput.Update() below
 			case tea.KeyBackspace, tea.KeyDelete:
 				d.pathSoftSelected = false
@@ -805,7 +801,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				d.pathInput.SetCursor(0)
 				d.pathInput.Focus()
 				d.pathCycler.Reset()
-				d.tabCompletions = nil
 				d.filterPathSuggestions()
 				return d, nil // consume the key
 			case tea.KeyLeft, tea.KeyRight:
@@ -826,13 +821,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 					val := d.pathCycler.Next()
 					d.pathInput.SetValue(val)
 					d.pathInput.SetCursor(len(val))
-					// Update highlighted index in the tab completions dropdown.
-					for i, tc := range d.tabCompletions {
-						if tc == val {
-							d.tabCompletionIdx = i
-							break
-						}
-					}
 					return d, nil
 				}
 
@@ -844,27 +832,13 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 						completed := matches[0] + string(os.PathSeparator)
 						d.pathInput.SetValue(completed)
 						d.pathInput.SetCursor(len(completed))
-						d.tabCompletions = nil
 						d.pathCycler.Reset()
 					} else {
-						// Multiple matches — complete to longest common prefix first.
-						lcp := longestCommonPrefix(matches)
-						if len(lcp) > len(path) {
-							// LCP extends beyond current input — apply it without cycling.
-							d.pathInput.SetValue(lcp)
-							d.pathInput.SetCursor(len(lcp))
-							d.tabCompletions = matches
-							d.tabCompletionIdx = -1
-							d.pathCycler.Reset()
-						} else {
-							// LCP matches current input — start cycling.
-							d.tabCompletions = matches
-							d.pathCycler.SetMatches(matches)
-							val := d.pathCycler.Next()
-							d.pathInput.SetValue(val)
-							d.pathInput.SetCursor(len(val))
-							d.tabCompletionIdx = 0
-						}
+						// Multiple matches — start cycling.
+						d.pathCycler.SetMatches(matches)
+						val := d.pathCycler.Next()
+						d.pathInput.SetValue(val)
+						d.pathInput.SetCursor(len(val))
 					}
 					return d, nil
 				}
@@ -876,6 +850,10 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 					d.pathInput.SetValue(d.pathSuggestions[d.pathSuggestionCursor])
 					d.pathInput.SetCursor(len(d.pathInput.Value()))
 				}
+			}
+			// Reset path cycler when tabbing away from the path field.
+			if cur == focusPath {
+				d.pathCycler.Reset()
 			}
 			// Move to next field.
 			if d.focusIndex < maxIdx {
@@ -1071,7 +1049,6 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			d.suggestionNavigated = false
 			d.pathSuggestionCursor = 0
 			d.pathCycler.Reset()
-			d.tabCompletions = nil
 			d.filterPathSuggestions()
 		}
 	case focusCommand:
@@ -1299,61 +1276,6 @@ func (d *NewDialog) View() string {
 		}
 	}
 
-	// Show filesystem tab-completions dropdown when active
-	if d.focusIndex == 1 && len(d.tabCompletions) > 0 {
-		suggestionStyle := lipgloss.NewStyle().
-			Foreground(ColorComment)
-		selectedStyle := lipgloss.NewStyle().
-			Foreground(ColorGreen).
-			Bold(true)
-
-		maxShow := 5
-		total := len(d.tabCompletions)
-		startIdx := 0
-		endIdx := total
-		if total > maxShow {
-			center := d.tabCompletionIdx
-			if center < 0 {
-				center = 0
-			}
-			startIdx = center - maxShow/2
-			if startIdx < 0 {
-				startIdx = 0
-			}
-			endIdx = startIdx + maxShow
-			if endIdx > total {
-				endIdx = total
-				startIdx = endIdx - maxShow
-			}
-		}
-
-		content.WriteString("  ")
-		content.WriteString(lipgloss.NewStyle().Foreground(ColorComment).Render(
-			fmt.Sprintf("─ %d completions (Tab: cycle) ─", total)))
-		content.WriteString("\n")
-
-		if startIdx > 0 {
-			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↑ %d more above", startIdx)))
-			content.WriteString("\n")
-		}
-
-		for i := startIdx; i < endIdx; i++ {
-			style := suggestionStyle
-			prefix := "    "
-			if i == d.tabCompletionIdx {
-				style = selectedStyle
-				prefix = "  ▶ "
-			}
-			// Show only the basename for readability, with full path on selected.
-			content.WriteString(style.Render(prefix + d.tabCompletions[i]))
-			content.WriteString("\n")
-		}
-
-		if endIdx < total {
-			content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ↓ %d more below", total-endIdx)))
-			content.WriteString("\n")
-		}
-	}
 	content.WriteString("\n")
 
 	// Command selection
@@ -1555,22 +1477,3 @@ func (d *NewDialog) View() string {
 	)
 }
 
-// longestCommonPrefix returns the longest common prefix of a set of strings.
-func longestCommonPrefix(strs []string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	prefix := strs[0]
-	for _, s := range strs[1:] {
-		for i := 0; i < len(prefix); i++ {
-			if i >= len(s) || s[i] != prefix[i] {
-				prefix = prefix[:i]
-				break
-			}
-		}
-		if prefix == "" {
-			return ""
-		}
-	}
-	return prefix
-}
