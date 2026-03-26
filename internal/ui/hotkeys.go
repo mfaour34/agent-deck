@@ -33,6 +33,7 @@ const (
 	hotkeySettings         = "settings"
 	hotkeyImport           = "import"
 	hotkeyReload           = "reload"
+	hotkeyReview           = "review"
 )
 
 var hotkeyActionOrder = []string{
@@ -63,6 +64,7 @@ var hotkeyActionOrder = []string{
 	hotkeySettings,
 	hotkeyImport,
 	hotkeyReload,
+	hotkeyReview,
 }
 
 var defaultHotkeyBindings = map[string]string{
@@ -93,6 +95,7 @@ var defaultHotkeyBindings = map[string]string{
 	hotkeySettings:         "S",
 	hotkeyImport:           "i",
 	hotkeyReload:           "ctrl+r",
+	hotkeyReview:           "p",
 }
 
 var hotkeyActionDefaultTriggers = map[string][]string{
