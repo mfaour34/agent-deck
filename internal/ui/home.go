@@ -172,6 +172,11 @@ type Home struct {
 	geminiModelDialog    *GeminiModelDialog    // For selecting Gemini model
 	sessionPickerDialog  *SessionPickerDialog  // For sending output to another session
 	worktreeFinishDialog *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
+	reviewDialog         *ReviewFileDialog     // For selecting files to review with mdreview
+
+	// mdreview install state
+	mdreviewInstalled bool
+	mdreviewCheckDone bool
 
 	// Configurable hotkeys
 	hotkeys        map[string]string // action -> configured key
@@ -543,6 +548,14 @@ type systemThemeMsg struct {
 	dark bool
 }
 
+type mdreviewInstallMsg struct {
+	err error
+}
+
+type mdreviewCheckMsg struct {
+	installed bool
+}
+
 // worktreeDirtyCheckMsg is sent when an async worktree dirty check completes
 type worktreeDirtyCheckMsg struct {
 	sessionID string
@@ -633,6 +646,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		geminiModelDialog:    NewGeminiModelDialog(),
 		sessionPickerDialog:  NewSessionPickerDialog(),
 		worktreeFinishDialog: NewWorktreeFinishDialog(),
+		reviewDialog:         NewReviewFileDialog(),
 		cursor:               0,
 		initialLoading:       true, // Show splash until sessions load
 		ctx:                  ctx,
@@ -2908,6 +2922,16 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case mdreviewInstallMsg:
+		if msg.err != nil {
+			h.setError(fmt.Errorf("failed to install mdreview: %v", msg.err))
+			return h, nil
+		}
+		h.mdreviewInstalled = true
+		h.clearError()
+		h.setError(fmt.Errorf("mdreview installed successfully — press p again to review"))
+		return h, nil
+
 	case sessionForkedMsg:
 		// Clean up forking state for source session
 		if msg.sourceID != "" {
@@ -3871,6 +3895,22 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h.worktreeFinishDialog.IsVisible() {
 			return h.handleWorktreeFinishDialogKey(msg)
 		}
+		if h.reviewDialog.IsVisible() {
+			var cmd tea.Cmd
+			h.reviewDialog, cmd = h.reviewDialog.Update(msg)
+			if h.reviewDialog.IsConfirmed() {
+				files := h.reviewDialog.SelectedFiles()
+				sessionName := h.reviewDialog.SessionName()
+				groupPath := h.reviewDialog.SessionGroupPath()
+				projectPath := h.reviewDialog.ProjectPath()
+				h.reviewDialog.Hide()
+				return h, h.createReviewSession(sessionName, groupPath, projectPath, files)
+			}
+			if !h.reviewDialog.IsVisible() {
+				return h, nil
+			}
+			return h, cmd
+		}
 
 		if h.notesEditing {
 			return h.handleNotesEditorKey(msg)
@@ -4661,6 +4701,55 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					h.setError(err)
 				}
 			}
+		}
+		return h, nil
+
+	case h.actionKey(hotkeyReview):
+		// Review session files with mdreview
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type != session.ItemTypeSession || item.Session == nil {
+				return h, nil
+			}
+			if item.Session.Tool == "mdreview" {
+				return h, nil
+			}
+			if item.Session.IsSSH() {
+				return h, nil
+			}
+			if !h.mdreviewCheckDone {
+				_, err := exec.LookPath("mdreview")
+				h.mdreviewInstalled = err == nil
+				h.mdreviewCheckDone = true
+			}
+			if !h.mdreviewInstalled {
+				_, pipxErr := exec.LookPath("pipx")
+				if pipxErr != nil {
+					h.setError(fmt.Errorf("mdreview requires pipx. Install pipx first: brew install pipx"))
+					return h, nil
+				}
+				h.setError(fmt.Errorf("installing mdreview from github.com/mfaour34/mdreview..."))
+				return h, func() tea.Msg {
+					cmd := exec.Command("pipx", "install", "git+https://github.com/mfaour34/mdreview")
+					err := cmd.Run()
+					return mdreviewInstallMsg{err: err}
+				}
+			}
+			projectPath := item.Session.WorktreePath
+			if projectPath == "" {
+				projectPath = item.Session.ProjectPath
+			}
+			if projectPath == "" {
+				h.setError(fmt.Errorf("session has no project path"))
+				return h, nil
+			}
+			h.reviewDialog.Show(
+				projectPath,
+				item.Session.Title,
+				item.Session.ID,
+				item.Session.GroupPath,
+				h.width, h.height,
+			)
 		}
 		return h, nil
 
@@ -6072,6 +6161,37 @@ func applyCreateSessionToolOverrides(inst *session.Instance, tool string, gemini
 	}
 }
 
+// createReviewSession creates an mdreview session for the selected files
+func (h *Home) createReviewSession(sourceSessionName, groupPath, projectPath string, files []string) tea.Cmd {
+	return func() tea.Msg {
+		if err := tmux.IsTmuxAvailable(); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("cannot create review session: %w", err)}
+		}
+
+		name := "review: " + sourceSessionName
+		var inst *session.Instance
+		if groupPath != "" {
+			inst = session.NewInstanceWithGroupAndTool(name, projectPath, groupPath, "mdreview")
+		} else {
+			inst = session.NewInstanceWithTool(name, projectPath, "mdreview")
+		}
+
+		args := []string{"mdreview"}
+		for _, f := range files {
+			escaped := strings.ReplaceAll(f, "'", "'\"'\"'")
+			args = append(args, "'"+escaped+"'")
+		}
+		inst.Command = strings.Join(args, " ")
+		inst.ReviewFiles = files
+
+		if err := inst.Start(); err != nil {
+			return sessionCreatedMsg{err: fmt.Errorf("failed to start review session: %w", err)}
+		}
+
+		return sessionCreatedMsg{instance: inst}
+	}
+}
+
 // quickForkSession performs a quick fork with default title suffix " (fork)"
 func (h *Home) quickForkSession(source *session.Instance) tea.Cmd {
 	if source == nil {
@@ -6914,6 +7034,9 @@ func (h *Home) View() string {
 	}
 	if h.sessionPickerDialog.IsVisible() {
 		return h.sessionPickerDialog.View()
+	}
+	if h.reviewDialog.IsVisible() {
+		return h.reviewDialog.View()
 	}
 	if h.worktreeFinishDialog.IsVisible() {
 		return h.worktreeFinishDialog.View()
