@@ -6273,6 +6273,40 @@ func (h *Home) forkSessionCmdWithOptions(
 			inst.Sandbox = session.NewSandboxConfig("")
 		}
 
+		// Propagate multi-repo config from source.
+		if source.IsMultiRepo() {
+			inst.MultiRepoEnabled = true
+			inst.AdditionalPaths = append([]string{}, source.AdditionalPaths...)
+			if len(source.MultiRepoWorktrees) > 0 {
+				inst.MultiRepoWorktrees = append([]session.MultiRepoWorktree{}, source.MultiRepoWorktrees...)
+			}
+			// Create new persistent dir with symlinks to shared worktrees/paths
+			home, _ := os.UserHomeDir()
+			parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+				return sessionForkedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr), sourceID: sourceID}
+			}
+			if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+				parentDir = resolved
+			}
+			inst.MultiRepoTempDir = parentDir
+			allPaths := inst.AllProjectPaths()
+			dirnames := session.DeduplicateDirnames(allPaths)
+			var newProjectPath string
+			var newAdditionalPaths []string
+			for i, p := range allPaths {
+				linkPath := filepath.Join(parentDir, dirnames[i])
+				_ = os.Symlink(p, linkPath)
+				if i == 0 {
+					newProjectPath = linkPath
+				} else {
+					newAdditionalPaths = append(newAdditionalPaths, linkPath)
+				}
+			}
+			inst.ProjectPath = newProjectPath
+			inst.AdditionalPaths = newAdditionalPaths
+		}
+
 		if err := inst.Start(); err != nil {
 			return sessionForkedMsg{err: err, sourceID: sourceID}
 		}
@@ -6311,11 +6345,23 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 	isWorktree := inst.IsWorktree()
 	worktreePath := inst.WorktreePath
 	worktreeRepoRoot := inst.WorktreeRepoRoot
+	isMultiRepo := inst.IsMultiRepo()
+	multiRepoTempDir := inst.MultiRepoTempDir
+	multiRepoWorktrees := inst.MultiRepoWorktrees
 	return func() tea.Msg {
 		killErr := inst.Kill()
 		if isWorktree {
 			_ = git.RemoveWorktree(worktreeRepoRoot, worktreePath, false)
 			_ = git.PruneWorktrees(worktreeRepoRoot)
+		}
+		if isMultiRepo {
+			if multiRepoTempDir != "" {
+				_ = os.RemoveAll(multiRepoTempDir)
+			}
+			for _, wt := range multiRepoWorktrees {
+				_ = git.RemoveWorktree(wt.RepoRoot, wt.WorktreePath, false)
+				_ = git.PruneWorktrees(wt.RepoRoot)
+			}
 		}
 		return sessionDeletedMsg{deletedID: id, killErr: killErr}
 	}
