@@ -989,6 +989,15 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			// Reset path cycler when tabbing away from the path field.
 			if cur == focusPath {
 				d.pathCycler.Reset()
+				// If current path field has content, move to next path field (create if needed).
+				pi := d.activePathInput()
+				if strings.TrimSpace(pi.Value()) != "" {
+					d.ensureEmptyTrailingPath()
+					d.activePathIdx++
+					d.pathSoftSelected = false
+					d.updateFocus()
+					return d, nil
+				}
 			}
 			// Move to next field.
 			if d.focusIndex < maxIdx {
@@ -1030,15 +1039,23 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			}
 
 		case "down":
-			if cur == focusPath && len(d.pathInputs) > 1 && d.activePathIdx < len(d.pathInputs)-1 {
-				// Move to next path field.
-				d.activePathIdx++
-				d.updateFocus()
-				return d, nil
+			if cur == focusPath {
+				pi := d.activePathInput()
+				// If current path has content and we're on the last field, create a new one.
+				if d.activePathIdx == len(d.pathInputs)-1 && strings.TrimSpace(pi.Value()) != "" {
+					d.ensureEmptyTrailingPath()
+				}
+				if d.activePathIdx < len(d.pathInputs)-1 {
+					d.activePathIdx++
+					d.pathSoftSelected = false
+					d.updateFocus()
+					return d, nil
+				}
 			}
 			if d.focusIndex < maxIdx {
 				d.focusIndex++
-				d.activePathIdx = 0 // reset when leaving path area
+				d.activePathIdx = 0
+				d.trimEmptyTrailingPaths() // clean up when leaving path area
 				d.updateFocus()
 			} else if cur == focusOptions && d.toolOptions != nil {
 				return d, d.toolOptions.Update(msg)

@@ -253,7 +253,10 @@ func TestNewDialog_TabDoesNotOverwriteCustomPath(t *testing.T) {
 	customPath := "/Users/test/brand-new-project"
 	d.pathInputs[0].SetValue(customPath)
 
-	// User presses Tab to move to command selection
+	// First Tab spawns a new empty path field (auto-grow behavior)
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	// Second Tab on empty new path field advances to command selection
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 
 	// The custom path should be PRESERVED, not overwritten
@@ -650,7 +653,7 @@ func TestNewDialog_TabNavigationWithWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = true
-	dialog.pathInputs[0].SetValue("/tmp/nonexistent-test-path-xyz")
+	dialog.pathInputs[0].SetValue("") // empty so Tab advances past path without auto-grow
 	dialog.rebuildFocusTargets()
 
 	branchIdx := dialog.indexOf(focusBranch)
@@ -682,7 +685,7 @@ func TestNewDialog_TabNavigationWithoutWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = false
-	dialog.pathInputs[0].SetValue("/tmp/nonexistent-test-path-xyz")
+	dialog.pathInputs[0].SetValue("") // empty so Tab advances past path without auto-grow
 	dialog.rebuildFocusTargets()
 
 	maxIdx := len(dialog.focusTargets) - 1
@@ -1070,10 +1073,17 @@ func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 	if d.pathInputs[0].Value() != expected && d.pathInputs[0].Value() != originalPath {
 		t.Errorf("path = %q, want %q or %q (Tab should accept/complete)", d.pathInputs[0].Value(), expected, originalPath)
 	}
-	// Second Tab: advance focus past path field.
+	// Second Tab: since path has content, moves to a new empty path field (auto-grow).
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 
-	// Focus should have moved forward (to command field)
+	// Should still be on path focus (new empty second path field)
+	if d.activePathIdx != 1 {
+		t.Errorf("activePathIdx = %d, want 1 (should move to new path field)", d.activePathIdx)
+	}
+
+	// Third Tab: empty path field, so advance to next dialog section.
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
+
 	if d.focusIndex < 2 {
 		t.Errorf("focusIndex = %d, want >= 2 (should move forward)", d.focusIndex)
 	}
