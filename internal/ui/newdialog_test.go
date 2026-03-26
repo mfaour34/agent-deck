@@ -263,9 +263,9 @@ func TestNewDialog_TabDoesNotOverwriteCustomPath(t *testing.T) {
 		t.Errorf("Tab overwrote custom path!\nGot: %q\nWant: %q\nThis is the bug from Issue #22", path, customPath)
 	}
 
-	// Focus should have moved to command field
+	// Focus should have moved to multi-repo field
 	if d.focusIndex != 2 {
-		t.Errorf("focusIndex = %d, want 2 (command field)", d.focusIndex)
+		t.Errorf("focusIndex = %d, want 2 (multi-repo field)", d.focusIndex)
 	}
 }
 
@@ -620,7 +620,7 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 	dialog.sandboxEnabled = false
 	dialog.inheritedSettings = nil
 	dialog.rebuildFocusTargets()
-	dialog.focusIndex = 2 // Command field
+	dialog.focusIndex = 3 // Command field
 
 	// Press 'w' to toggle worktree.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
@@ -635,7 +635,7 @@ func TestNewDialog_WorktreeToggle_ViaKeyPress(t *testing.T) {
 	}
 
 	// Press 'w' again to disable (need to be on command field).
-	dialog.focusIndex = 2
+	dialog.focusIndex = 3
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 
 	if dialog.worktreeEnabled {
@@ -650,6 +650,7 @@ func TestNewDialog_TabNavigationWithWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = true
+	dialog.pathInput.SetValue("/tmp/nonexistent-test-path-xyz")
 	dialog.rebuildFocusTargets()
 
 	branchIdx := dialog.indexOf(focusBranch)
@@ -681,6 +682,7 @@ func TestNewDialog_TabNavigationWithoutWorktree(t *testing.T) {
 	dialog.inheritedSettings = nil
 	dialog.focusIndex = 0
 	dialog.worktreeEnabled = false
+	dialog.pathInput.SetValue("/tmp/nonexistent-test-path-xyz")
 	dialog.rebuildFocusTargets()
 
 	maxIdx := len(dialog.focusTargets) - 1
@@ -704,7 +706,7 @@ func TestNewDialog_View_ShowsWorktreeCheckbox(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.SetSize(80, 40)
 	dialog.Show()
-	dialog.focusIndex = 2 // Command field
+	dialog.focusIndex = 3 // Command field
 
 	view := dialog.View()
 
@@ -833,7 +835,7 @@ func TestNewDialog_WorktreeCheckbox_SpaceToggle(t *testing.T) {
 	dialog.sandboxEnabled = false
 	dialog.inheritedSettings = nil
 	dialog.rebuildFocusTargets()
-	dialog.focusIndex = 3 // Worktree checkbox
+	dialog.focusIndex = 4 // Worktree checkbox
 
 	// Space toggles worktree on.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
@@ -848,7 +850,7 @@ func TestNewDialog_WorktreeCheckbox_SpaceToggle(t *testing.T) {
 	}
 
 	// Navigate back and space again to disable.
-	dialog.focusIndex = 3
+	dialog.focusIndex = 4
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	if dialog.worktreeEnabled {
@@ -860,7 +862,7 @@ func TestNewDialog_SandboxCheckbox_SpaceToggle(t *testing.T) {
 	dialog := NewNewDialog()
 	dialog.Show()
 	dialog.sandboxEnabled = false // Ensure known initial state.
-	dialog.focusIndex = 4         // Sandbox checkbox
+	dialog.focusIndex = 5         // Sandbox checkbox
 
 	// Space toggles sandbox on.
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
@@ -870,7 +872,7 @@ func TestNewDialog_SandboxCheckbox_SpaceToggle(t *testing.T) {
 	}
 
 	// Space again toggles off.
-	dialog.focusIndex = 4
+	dialog.focusIndex = 5
 	dialog, _ = dialog.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	if dialog.sandboxEnabled {
@@ -884,7 +886,7 @@ func TestNewDialog_CheckboxesFocusIndependently(t *testing.T) {
 	dialog.Show()
 
 	// Focus on worktree checkbox — only it should highlight.
-	dialog.focusIndex = 3
+	dialog.focusIndex = 4
 	view := dialog.View()
 
 	// Worktree line should have the focus indicator.
@@ -893,7 +895,7 @@ func TestNewDialog_CheckboxesFocusIndependently(t *testing.T) {
 	}
 
 	// Focus on sandbox checkbox — only it should highlight.
-	dialog.focusIndex = 4
+	dialog.focusIndex = 5
 	view = dialog.View()
 
 	if !strings.Contains(view, "Run in Docker sandbox") {
