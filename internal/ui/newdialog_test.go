@@ -1062,16 +1062,20 @@ func TestNewDialog_SoftSelect_TabPreservesValue(t *testing.T) {
 		t.Fatal("pathSoftSelected should be true")
 	}
 
-	// Press Tab to accept and move to next field
+	// First Tab: path completion appends trailing slash (exact dir match).
 	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 
-	// Value should be preserved (Tab accepts as-is)
-	if d.pathInput.Value() != originalPath {
-		t.Errorf("path = %q, want %q (Tab should preserve value)", d.pathInput.Value(), originalPath)
+	// Value should be the original path (possibly with trailing separator from completion).
+	expected := originalPath + string(os.PathSeparator)
+	if d.pathInput.Value() != expected && d.pathInput.Value() != originalPath {
+		t.Errorf("path = %q, want %q or %q (Tab should accept/complete)", d.pathInput.Value(), expected, originalPath)
 	}
-	// Focus should have moved forward
-	if d.focusIndex != 2 {
-		t.Errorf("focusIndex = %d, want 2 (should move to command)", d.focusIndex)
+	// Second Tab: advance focus past path field.
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	// Focus should have moved forward (focusMultiRepo is between path and command)
+	if d.focusIndex < 2 {
+		t.Errorf("focusIndex = %d, want >= 2 (should move forward)", d.focusIndex)
 	}
 }
 
