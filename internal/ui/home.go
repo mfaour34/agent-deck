@@ -4066,6 +4066,11 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
+		// Don't submit form while user is editing a multi-repo path entry
+		if h.newDialog.IsMultiRepoEditing() {
+			return h, nil
+		}
+
 		// Validate before creating session
 		if validationErr := h.newDialog.Validate(); validationErr != "" {
 			h.newDialog.SetError(validationErr)
@@ -4132,6 +4137,7 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		sandboxMode := h.newDialog.IsSandboxEnabled()
 		epicRunnerMode := h.newDialog.IsEpicRunnerEnabled()
 		epicID := h.newDialog.GetEpicID()
+		multiRepoPaths, multiRepoEnabled := h.newDialog.GetMultiRepoPaths()
 
 		return h, h.createSessionInGroupWithWorktreeAndOptions(
 			name,
@@ -4145,6 +4151,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			sandboxMode,
 			epicRunnerMode,
 			epicID,
+			multiRepoEnabled,
+			multiRepoPaths,
 			toolOptionsJSON,
 		)
 
@@ -5178,6 +5186,8 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				false,
 				false,
 				"",
+				false,
+				nil,
 				pendingToolOpts,
 			)
 		case "n", "N", "esc":
@@ -5863,6 +5873,8 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 	sandboxEnabled bool,
 	epicRunnerEnabled bool,
 	epicID string,
+	multiRepoEnabled bool,
+	multiRepoPaths []string,
 	toolOptionsJSON json.RawMessage,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -5871,7 +5883,7 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			return sessionCreatedMsg{err: fmt.Errorf("cannot create session: %w", err)}
 		}
 
-		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" {
+		if worktreePath != "" && worktreeRepoRoot != "" && worktreeBranch != "" && !multiRepoEnabled {
 			// Worktree creation can be slow on large repos; keep it in async cmd path
 			// so the TUI remains responsive.
 			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
@@ -5937,6 +5949,103 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(
 			inst.EpicID = epicID
 			if err := session.SetupEpicRunnerConductor(name, epicID); err != nil {
 				return sessionCreatedMsg{err: fmt.Errorf("failed to set up epic runner: %w", err)}
+			}
+		}
+
+		// Apply multi-repo config.
+		if multiRepoEnabled && len(multiRepoPaths) > 1 {
+			inst.MultiRepoEnabled = true
+			inst.AdditionalPaths = multiRepoPaths[1:]
+			allPaths := inst.AllProjectPaths()
+
+			if worktreeBranch != "" {
+				home, _ := os.UserHomeDir()
+				sanitizedBranch := strings.ReplaceAll(worktreeBranch, "/", "-")
+				sanitizedBranch = strings.ReplaceAll(sanitizedBranch, " ", "-")
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees",
+					fmt.Sprintf("%s-%s", sanitizedBranch, inst.ID[:8]))
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo worktree dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				dirnames := session.DeduplicateDirnames(allPaths)
+				var newProjectPath string
+				var newAdditionalPaths []string
+				for i, p := range allPaths {
+					wtPath := filepath.Join(parentDir, dirnames[i])
+					if git.IsGitRepo(p) {
+						repoRoot, rootErr := git.GetWorktreeBaseRoot(p)
+						if rootErr != nil {
+							uiLog.Warn("multi_repo_worktree_skip", slog.String("path", p), slog.String("error", rootErr.Error()))
+							_ = os.Symlink(p, wtPath)
+							if i == 0 {
+								newProjectPath = wtPath
+							} else {
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
+							}
+							continue
+						}
+						if err := git.CreateWorktree(repoRoot, wtPath, worktreeBranch); err != nil {
+							uiLog.Warn("multi_repo_worktree_create_fail", slog.String("path", p), slog.String("error", err.Error()))
+							_ = os.Symlink(p, wtPath)
+							if i == 0 {
+								newProjectPath = wtPath
+							} else {
+								newAdditionalPaths = append(newAdditionalPaths, wtPath)
+							}
+							continue
+						}
+						inst.MultiRepoWorktrees = append(inst.MultiRepoWorktrees, session.MultiRepoWorktree{
+							OriginalPath: p,
+							WorktreePath: wtPath,
+							RepoRoot:     repoRoot,
+							Branch:       worktreeBranch,
+						})
+						if i == 0 {
+							newProjectPath = wtPath
+						} else {
+							newAdditionalPaths = append(newAdditionalPaths, wtPath)
+						}
+					} else {
+						_ = os.Symlink(p, wtPath)
+						if i == 0 {
+							newProjectPath = wtPath
+						} else {
+							newAdditionalPaths = append(newAdditionalPaths, wtPath)
+						}
+					}
+				}
+				inst.ProjectPath = newProjectPath
+				inst.AdditionalPaths = newAdditionalPaths
+			} else {
+				home, _ := os.UserHomeDir()
+				parentDir := filepath.Join(home, ".agent-deck", "multi-repo-worktrees", inst.ID[:8])
+				if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+					return sessionCreatedMsg{err: fmt.Errorf("failed to create multi-repo dir: %w", mkErr)}
+				}
+				if resolved, evalErr := filepath.EvalSymlinks(parentDir); evalErr == nil {
+					parentDir = resolved
+				}
+				inst.MultiRepoTempDir = parentDir
+
+				dirnames := session.DeduplicateDirnames(allPaths)
+				var newProjectPath string
+				var newAdditionalPaths []string
+				for i, p := range allPaths {
+					linkPath := filepath.Join(parentDir, dirnames[i])
+					_ = os.Symlink(p, linkPath)
+					if i == 0 {
+						newProjectPath = linkPath
+					} else {
+						newAdditionalPaths = append(newAdditionalPaths, linkPath)
+					}
+				}
+				inst.ProjectPath = newProjectPath
+				inst.AdditionalPaths = newAdditionalPaths
 			}
 		}
 
@@ -6072,7 +6181,7 @@ func (h *Home) quickCreateSession() tea.Cmd {
 	return h.createSessionInGroupWithWorktreeAndOptions(
 		name, projectPath, command, groupPath,
 		"", "", "", // no worktree
-		geminiYoloMode, false, false, "", toolOptionsJSON,
+		geminiYoloMode, false, false, "", false, nil, toolOptionsJSON,
 	)
 }
 
