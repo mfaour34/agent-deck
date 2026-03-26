@@ -848,7 +848,7 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 						d.pathCycler.Reset()
 					} else {
 						// Multiple matches — complete to longest common prefix first.
-						lcp := session.LongestCommonPrefix(matches)
+						lcp := longestCommonPrefix(matches)
 						if len(lcp) > len(path) {
 							// LCP extends beyond current input — apply it without cycling.
 							d.pathInput.SetValue(lcp)
@@ -1553,4 +1553,24 @@ func (d *NewDialog) View() string {
 		lipgloss.Center,
 		dialog,
 	)
+}
+
+// longestCommonPrefix returns the longest common prefix of a set of strings.
+func longestCommonPrefix(strs []string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	prefix := strs[0]
+	for _, s := range strs[1:] {
+		for i := 0; i < len(prefix); i++ {
+			if i >= len(s) || s[i] != prefix[i] {
+				prefix = prefix[:i]
+				break
+			}
+		}
+		if prefix == "" {
+			return ""
+		}
+	}
+	return prefix
 }

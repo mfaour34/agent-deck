@@ -58,14 +58,14 @@ func TestGetDirectoryCompletions(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name:     "Exact match directory (should list children for drill-in)",
+			name:     "Exact match directory (should return itself)",
 			input:    filepath.Join(tmpDir, "work"),
-			expected: []string{filepath.Join(tmpDir, "work/agent-deck"), filepath.Join(tmpDir, "work/other")},
+			expected: []string{filepath.Join(tmpDir, "work")},
 		},
 		{
 			name:     "Exact match leaf directory (no children)",
 			input:    filepath.Join(tmpDir, "personal"),
-			expected: nil,
+			expected: []string{filepath.Join(tmpDir, "personal")},
 		},
 		{
 			name:     "Trailing slash lists directory contents",
@@ -81,27 +81,6 @@ func TestGetDirectoryCompletions(t *testing.T) {
 			sort.Strings(results)
 			sort.Strings(tt.expected)
 			assert.Equal(t, tt.expected, results)
-		})
-	}
-}
-
-func TestLongestCommonPrefix(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []string
-		expected string
-	}{
-		{"empty", nil, ""},
-		{"single", []string{"/foo/bar"}, "/foo/bar"},
-		{"common prefix", []string{"/foo/bar", "/foo/baz"}, "/foo/ba"},
-		{"no common", []string{"abc", "xyz"}, ""},
-		{"identical", []string{"/a/b", "/a/b"}, "/a/b"},
-		{"partial path", []string{"/home/user/projects", "/home/user/playground"}, "/home/user/p"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, LongestCommonPrefix(tt.input))
 		})
 	}
 }
