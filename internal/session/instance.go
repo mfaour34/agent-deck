@@ -43,7 +43,8 @@ const (
 	StatusWaiting  Status = "waiting"
 	StatusIdle     Status = "idle"
 	StatusError    Status = "error"
-	StatusStarting Status = "starting" // Session is being created (tmux initializing)
+	StatusStarting   Status = "starting"   // Session is being created (tmux initializing)
+	StatusCompleted  Status = "completed"  // Session has completed (e.g. mdreview finished)
 )
 
 const wrapperPlaceholder = "{command}"
@@ -84,6 +85,9 @@ type Instance struct {
 	AdditionalPaths    []string            `json:"additional_paths,omitempty"`    // Paths beyond ProjectPath
 	MultiRepoTempDir   string              `json:"multi_repo_temp_dir,omitempty"` // Temp cwd for multi-repo sessions
 	MultiRepoWorktrees []MultiRepoWorktree `json:"multi_repo_worktrees,omitempty"`
+
+	// Review session support
+	ReviewFiles []string `json:"review_files,omitempty"` // Files selected for mdreview
 
 	Command        string    `json:"command"`
 	Wrapper        string    `json:"wrapper,omitempty"` // Optional wrapper command with {command} placeholder
@@ -2218,6 +2222,10 @@ func (i *Instance) UpdateStatus() error {
 		return nil // Skip - still in error, checked recently
 	}
 
+	if i.Status == StatusCompleted {
+		return nil
+	}
+
 	// Check if tmux session exists
 	if !i.tmuxSession.Exists() {
 		i.Status = StatusError
@@ -2318,7 +2326,11 @@ func (i *Instance) UpdateStatus() error {
 	case "starting":
 		i.Status = StatusStarting
 	case "inactive":
-		i.Status = StatusError
+		if i.Tool == "mdreview" {
+			i.Status = StatusCompleted
+		} else {
+			i.Status = StatusError
+		}
 	default:
 		i.Status = StatusError
 	}
