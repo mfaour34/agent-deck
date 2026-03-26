@@ -50,8 +50,8 @@ func TestReviewDialogSelection(t *testing.T) {
 	if !d.IsVisible() {
 		t.Fatal("dialog should be visible")
 	}
-	if len(d.files) != 3 {
-		t.Fatalf("expected 3 files, got %d", len(d.files))
+	if len(d.allFiles) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(d.allFiles))
 	}
 	if d.SelectedCount() != 0 {
 		t.Fatal("should start with 0 selected")
