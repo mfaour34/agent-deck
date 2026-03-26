@@ -8051,6 +8051,12 @@ func (h *Home) renderHelpBarMinimal() string {
 			if notesRendered != "" {
 				contextKeys += " " + notesRendered
 			}
+			if item.Session != nil && item.Session.Tool != "mdreview" && !item.Session.IsSSH() && item.Session.ProjectPath != "" {
+				reviewRendered := renderKeys(h.actionKey(hotkeyReview))
+				if reviewRendered != "" {
+					contextKeys += " " + reviewRendered
+				}
+			}
 		}
 	}
 
@@ -8152,6 +8158,11 @@ func (h *Home) renderHelpBarCompact() string {
 			}
 			if key := h.actionKey(hotkeyEditNotes); key != "" {
 				contextHints = append(contextHints, h.helpKeyShort(key, "Notes"))
+			}
+			if key := h.actionKey(hotkeyReview); key != "" {
+				if item.Session != nil && item.Session.Tool != "mdreview" && !item.Session.IsSSH() && item.Session.ProjectPath != "" {
+					contextHints = append(contextHints, h.helpKeyShort(key, "Rev"))
+				}
 			}
 		}
 	}
@@ -8329,6 +8340,11 @@ func (h *Home) renderHelpBarFull() string {
 			}
 			if notesKey != "" {
 				primaryHints = append(primaryHints, h.helpKey(notesKey, "Notes"))
+			}
+			if reviewKey := h.actionKey(hotkeyReview); reviewKey != "" {
+				if item.Session != nil && item.Session.Tool != "mdreview" && !item.Session.IsSSH() && item.Session.ProjectPath != "" {
+					primaryHints = append(primaryHints, h.helpKey(reviewKey, "Review"))
+				}
 			}
 			if renameKey != "" {
 				secondaryHints = append(secondaryHints, h.helpKey(renameKey, "Rename"))
